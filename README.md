@@ -8,9 +8,9 @@ This project was developed for the DAS 839-NoSQL Systems End Semester Project.
 
 ## 📊 DatasetThis project uses the official **NASA HTTP Web Server Logs** (July/August 1995) from the Internet Traffic Archive. 
 
-***Format:** ASCII text log files, one HTTP request per line.
-***Fields extracted:** `host`, `timestamp`, `log_date`, `log_hour`, `http_method`, `resource_path`, `protocol_version`, `status_code`, and `bytes_transferred`.
-***Important:** Do not manually clean or preprocess the files outside of the defined ETL pipelines.
+* **Format:** ASCII text log files, one HTTP request per line.
+* **Fields extracted:** `host`, `timestamp`, `log_date`, `log_hour`, `http_method`, `resource_path`, `protocol_version`, `status_code`, and `bytes_transferred`.
+* **Important:** Do not manually clean or preprocess the files outside of the defined ETL pipelines.
 
 ---
 
@@ -29,9 +29,9 @@ The framework is orchestrated by a Python controller that physically batches the
 ## 🔍 Analytical Workload
 All pipelines must successfully compute the following three mandatory queries using the exact same output schemas:
 
-***Query 1: Daily Traffic Summary** - Computes total request count and bytes transferred per `log_date` and `status_code`.
-***Query 2: Top Requested Resources** - Identifies the top 20 requested resource paths by request count, including distinct hosts.
-***Query 3: Hourly Error Analysis** - Calculates error rates (status codes 400-599) and distinct error-generating hosts per `log_date` and `log_hour`.
+* **Query 1: Daily Traffic Summary** - Computes total request count and bytes transferred per `log_date` and `status_code`.
+* **Query 2: Top Requested Resources** - Identifies the top 20 requested resource paths by request count, including distinct hosts.
+* **Query 3: Hourly Error Analysis** - Calculates error rates (status codes 400-599) and distinct error-generating hosts per `log_date` and `log_hour`.
 
 ---
 
