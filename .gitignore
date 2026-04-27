@@ -1,0 +1,19 @@
+# .gitignore
+
+# Ignore raw data and generated output batches
+data/raw/
+data/output/
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Java/Maven targets (for Member 2)
+target/
+*.jar
+*.class
+
+# IDE configurations
+.vscode/
+.idea/
