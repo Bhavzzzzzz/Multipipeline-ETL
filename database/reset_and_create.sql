@@ -1,7 +1,18 @@
+-- Drop existing tables (safe to run multiple times)
+BEGIN;
+
+DROP TABLE IF EXISTS hourly_errors CASCADE;
+DROP TABLE IF EXISTS top_resources CASCADE;
+DROP TABLE IF EXISTS daily_traffic CASCADE;
+DROP TABLE IF EXISTS run_metadata CASCADE;
+
+COMMIT;
+
+-- Recreate schema
 -- 1. The Central Ledger (Tracks every execution across all pipelines)
 CREATE TABLE run_metadata (
     run_id SERIAL PRIMARY KEY,
-    pipeline_name VARCHAR(50) NOT NULL, -- Will store 'MapReduce', 'Pig', 'Hive', or 'MongoDB'
+    pipeline_name VARCHAR(50) NOT NULL,
     run_identifier VARCHAR(100) NOT NULL,
     batch_id INT NOT NULL,
     batch_size INT,
@@ -42,3 +53,5 @@ CREATE TABLE hourly_errors (
     error_rate NUMERIC(5, 2) NOT NULL,
     distinct_error_hosts INT NOT NULL
 );
+
+-- End of reset_and_create.sql

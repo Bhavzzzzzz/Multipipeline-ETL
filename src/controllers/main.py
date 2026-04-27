@@ -5,46 +5,8 @@ import subprocess
 import time
 import argparse
 
-# The next person working on Member 3's tasks will implement this module
-# import db_client 
-
-def create_batches(input_path: str, batch_size: int, staging_dir: str):
-    """
-    Splits the massive input file into smaller physical files based on the requested record count.
-    Batch IDs begin from 1 and increase sequentially[cite: 62].
-    """
-    if os.path.exists(staging_dir):
-        shutil.rmtree(staging_dir)
-    os.makedirs(staging_dir)
-
-    batch_files = []
-    total_records = 0
-
-    print(f"[*] Splitting logs into batches of {batch_size} records...")
-    with open(input_path, 'r', encoding='latin-1') as f:
-        current_batch = []
-        batch_id = 1
-        
-        for line in f:
-            current_batch.append(line)
-            total_records += 1
-            
-            if len(current_batch) == batch_size:
-                batch_path = os.path.join(staging_dir, f'batch_{batch_id}.txt')
-                with open(batch_path, 'w', encoding='latin-1') as out:
-                    out.writelines(current_batch)
-                batch_files.append((batch_id, batch_path, len(current_batch)))
-                current_batch = []
-                batch_id += 1
-                
-        # Handle the final (potentially smaller) batch
-        if current_batch:
-            batch_path = os.path.join(staging_dir, f'batch_{batch_id}.txt')
-            with open(batch_path, 'w', encoding='latin-1') as out:
-                out.writelines(current_batch)
-            batch_files.append((batch_id, batch_path, len(current_batch)))
-
-    return batch_files, total_records
+import db_client
+from utils import process_and_batch_logs
 
 def run_pig_pipeline(batch_path: str, output_dir: str):
     """Executes the Pig script via local system call."""
@@ -71,8 +33,7 @@ def trigger_db_load(batch_id: int, output_dir: str, metadata: dict):
     Handoff point for Member 3's PostgreSQL ingestion.
     """
     print(f"[*] Loading results from {output_dir} into PostgreSQL for Batch {batch_id}...")
-    # db_client.ingest_query_results(batch_id, output_dir, metadata)
-    pass
+    return db_client.ingest_query_results(output_dir, metadata)
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-Pipeline ETL Orchestrator")
@@ -84,18 +45,28 @@ def main():
     staging_dir = "data/output/staging_batches"
     base_output_dir = "data/output/pig_results"
 
+    if os.path.exists(staging_dir):
+        shutil.rmtree(staging_dir)
+    os.makedirs(staging_dir)
+
     # Start the official runtime timer
     start_time = time.time()
 
-    # 1. Split logs
-    batch_files, total_records = create_batches(args.input, args.batch_size, staging_dir)
+    # 1. Split logs using the shared utility helper
+    batch_files, total_records, total_malformed_records = process_and_batch_logs(
+        [args.input],
+        staging_dir,
+        batch_size=args.batch_size,
+    )
     num_batches = len(batch_files)
+    avg_batch_size = total_records / num_batches if num_batches > 0 else 0
     
     # 2. Process each batch sequentially
-    for batch_id, batch_path, records_in_batch in batch_files:
+    for batch_id, batch_path, records_in_batch, malformed_in_batch in batch_files:
         batch_output_dir = os.path.join(base_output_dir, f"batch_{batch_id}")
         
         if args.pipeline == "pig":
+            batch_start = time.time()
             run_pig_pipeline(batch_path, batch_output_dir)
             
             # Formulate metadata to pass down to the database script
@@ -104,15 +75,18 @@ def main():
                 "run_identifier": f"run_{int(start_time)}",
                 "batch_id": batch_id,
                 "batch_size": records_in_batch,
+                "average_batch_size": avg_batch_size,
+                "runtime_seconds": None,
+                "malformed_record_count": malformed_in_batch,
             }
             
             # 3. Load into DB
-            trigger_db_load(batch_id, batch_output_dir, metadata)
+            run_id = trigger_db_load(batch_id, batch_output_dir, metadata)
+            batch_runtime = time.time() - batch_start
+            db_client.update_run_runtime(run_id, batch_runtime)
 
     # Calculate final runtime (must include write to DB)
     total_runtime = time.time() - start_time
-    avg_batch_size = total_records / num_batches if num_batches > 0 else 0
-
     # 4. Final Console Report
     print("\n" + "="*50)
     print(" ETL EXECUTION REPORT")
@@ -120,8 +94,9 @@ def main():
     print(f"Pipeline Selected : {args.pipeline.upper()}")
     print(f"Total Runtime     : {total_runtime:.2f} seconds")
     print(f"Total Records     : {total_records}")
+    print(f"Malformed Records  : {total_malformed_records}")
     print(f"Total Batches     : {num_batches}")
-    print(f"Avg Batch Size    : {avg_batch_size:.2f} records [cite: 63]")
+    print(f"Avg Batch Size    : {avg_batch_size:.2f} records")
     print("="*50)
 
 if __name__ == "__main__":

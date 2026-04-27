@@ -22,7 +22,7 @@ The framework is orchestrated by a Python controller that physically batches the
 2.  **Execution Pipelines:**
     * **Phase 1:** Apache Pig (replacing MapReduce).
     * **Phase 2:** Apache Hive & MongoDB.
-3. **Reporting Database (PostgreSQL):** Stores the final aggregated query results alongside execution metadata (pipeline name, run identifier, batch ID, runtime, etc.).
+3. **Reporting Database (PostgreSQL):** Stores the final aggregated query results alongside execution metadata (pipeline name, run identifier, batch ID, batch size, runtime, and malformed-record count).
 
 ---
 
@@ -38,27 +38,167 @@ All pipelines must successfully compute the following three mandatory queries us
 ## 🚀 Setup & Execution
 
 ### Prerequisites
+* Java 11 (OpenJDK)
 * Python 3.8+
 * Apache Pig (Local Mode)
-* PostgreSQL (Running inside WSL/Ubuntu recommended)
+* PostgreSQL (Running inside WSL/Ubuntu or systemd Linux recommended)
 * `psycopg2` (Python library for PostgreSQL)
 
+### Environment setup
+
+These commands install and configure the runtime used by this project. They assume a Debian/Ubuntu-style system and that you want a system-wide Apache Pig install under `/opt` (recommended).
+
+1) Install system packages (JDK, Python, Postgres tooling):
+
+```bash
+sudo apt update
+sudo apt install -y openjdk-11-jdk python3 python3-pip python3-venv postgresql postgresql-contrib wget curl tar
+```
+
+2) Verify Java and Python:
+
+```bash
+java -version
+python3 --version
+psql --version
+```
+
+3) Create and activate a Python virtualenv for controller development, then install the DB driver:
+
+```bash
+cd /mnt/c/Codes/Multipipeline-ETL
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install psycopg2-binary
+```
+
+4) Install Apache Pig system-wide under `/opt` (example uses Pig 0.18.0):
+
+```bash
+cd /tmp
+wget https://downloads.apache.org/pig/pig-0.18.0/pig-0.18.0.tar.gz
+sudo tar -xzf pig-0.18.0.tar.gz -C /opt
+
+# Create a system profile so Pig is on PATH and Java is pointed to your JDK
+sudo tee /etc/profile.d/pig.sh > /dev/null <<'EOF'
+export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+export PIG_HOME=/opt/pig-0.18.0
+export PATH="$PIG_HOME/bin:$PATH"
+EOF
+
+sudo chmod 644 /etc/profile.d/pig.sh
+source /etc/profile.d/pig.sh
+
+# optional convenient symlink
+sudo ln -sfn /opt/pig-0.18.0/bin/pig /usr/local/bin/pig
+
+# verify
+pig -version
+java -version
+```
+
+If `java -version` still reports Java 8, update your active Java binary before running Pig:
+
+```bash
+sudo update-alternatives --config java
+sudo update-alternatives --config javac
+```
+
+Pig also needs the runtime jars used by this environment:
+
+```bash
+sudo apt install -y libcommons-lang3-java libcommons-compress-java libcommons-text-java
+export PIG_CLASSPATH=/usr/share/java/commons-text.jar:/usr/share/java/commons-compress.jar:/usr/share/java/commons-lang3.jar:$PIG_CLASSPATH
+```
+
+Note: Do NOT install Pig inside `/usr/lib` (that's for JVM distributions). Keep Pig under `/opt` or `/usr/local` so it is easy to manage and not overwritten by package managers.
+
+5) PostgreSQL setup (create DB and load schema)
+
+The project schema is in `database/reset_and_create.sql`. Use it to create a fresh database state when needed:
+
+```bash
+sudo service postgresql start
+sudo -u postgres psql -d nosql_project -f database/reset_and_create.sql
+```
+
+If you need to create the database first, use:
+
+```bash
+sudo service postgresql start
+sudo -u postgres psql -c "CREATE DATABASE nosql_project;"
+# set a password for postgres user (replace 'your_password' with your chosen password)
+sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'your_password';"
+# load the schema into the new database
+sudo -u postgres psql -d nosql_project -f database/reset_and_create.sql
+# verify schema/tables (simple check)
+sudo -u postgres psql -d nosql_project -c "\dt"
+```
+
+6) Quick local run (after environment ready)
+
+```bash
+source .venv/bin/activate
+export PGDATABASE=nosql_project
+export PGUSER=postgres
+export PGPASSWORD='your_password'
+export PGHOST=localhost
+export PGPORT=5432
+export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+export PIG_HOME=/opt/pig-0.18.0
+export PATH="$JAVA_HOME/bin:$PIG_HOME/bin:$PATH"
+export PIG_CLASSPATH=/usr/share/java/commons-text.jar:/usr/share/java/commons-compress.jar:/usr/share/java/commons-lang3.jar:$PIG_CLASSPATH
+
+python src/controllers/main.py --pipeline pig --batch-size 1000 --input data/raw/access_log_Jul95
+```
+
+If you want to run both NASA files together, concatenate them first:
+
+```bash
+cat data/raw/access_log_Jul95 data/raw/access_log_Aug95 > data/raw/access_log_combined.txt
+python src/controllers/main.py --pipeline pig --batch-size 1000 --input data/raw/access_log_combined.txt
+```
+
+### Reset and rerun
+
+When you want a clean database before testing again:
+
+```bash
+sudo -u postgres psql -d nosql_project -f database/reset_and_create.sql
+python src/controllers/main.py --pipeline pig --batch-size 1000 --input data/raw/access_log_Jul95
+```
+
+### Output verification
+
+After a successful run, check the tables with:
+
+```bash
+sudo -u postgres psql -d nosql_project -c "SELECT * FROM run_metadata ORDER BY run_id DESC LIMIT 5;"
+sudo -u postgres psql -d nosql_project -c "SELECT COUNT(*) FROM daily_traffic;"
+sudo -u postgres psql -d nosql_project -c "SELECT COUNT(*) FROM top_resources;"
+sudo -u postgres psql -d nosql_project -c "SELECT COUNT(*) FROM hourly_errors;"
+```
+
 ### 1. Data Preparation
-Create the required local directories (these are ignored by `.gitignore`) and download the NASA logs:
+Create the required local directories (these are ignored by `.gitignore`) and place the extracted NASA logs in `data/raw/`:
+
 ```bash
 mkdir -p data/raw data/output
-# Download the dataset into data/raw/
+# expected extracted filenames:
+# data/raw/access_log_Jul95
+# data/raw/access_log_Aug95
 ```
 
 ### 2. Running the Pipeline (Phase 1)
 To execute the ETL flow using the Apache Pig pipeline, use the Python orchestrator:
 
 ```bash
-python src/controller/main.py --pipeline pig --batch-size 100000 --input data/raw/NASA_access_log_Jul95.txt
+python src/controllers/main.py --pipeline pig --batch-size 1000 --input data/raw/access_log_Jul95
 ```
 
 ### 3. Output
-The orchestrator will output batch results into `data/output/pig_results/batch_<id>/` and generate a final console execution report measuring total runtime and batch statistics.
+The orchestrator will output batch results into `data/output/pig_results/batch_<id>/` and generate a final console execution report measuring total runtime, total records, malformed-record count, and batch statistics.
 
 ---
 
@@ -69,8 +209,8 @@ To keep development clean and prevent merge conflicts, responsibilities are divi
 * **Member 1 (Data & Controller):** * Design the master regex for log parsing.
     * Build the core `main.py` Python orchestrator to handle physical file batching and sequential execution triggering. *(Completed)*
 * **Member 2 (Pig Pipeline):** * Write the Apache Pig scripts (`queries.pig`) to handle the ETL aggregations for all three queries. *(Completed)*
-* **Member 3 (Database & Ingestion):** * **[NEXT STEP]** Design the PostgreSQL schema for the three queries (`database/schema.sql`).
-    * Implement `src/controller/db_client.py` using `psycopg2`.
-    * *Integration note:* Hook your ingestion function into the `trigger_db_load()` handoff point inside `src/controller/main.py`. The controller will pass you the `batch_id`, the directory containing the Pig CSV outputs, and a dictionary of run metadata.
-* **Member 4 (Reporting UI & Phase 2 Pipelines):** * Build the CLI dashboard in `src/controller/reporting.py` to query PostgreSQL and render the final formatted console output.
+* **Member 3 (Database & Ingestion):** * **[NEXT STEP]** Design the PostgreSQL schema for the three queries (`database/schema.sql`) and reset script (`database/reset_and_create.sql`).
+    * Implement `src/controllers/db_client.py` using `psycopg2`.
+    * *Integration note:* Hook your ingestion function into the `trigger_db_load()` handoff point inside `src/controllers/main.py`. The controller passes the `batch_id`, the directory containing the Pig CSV outputs, and a dictionary of run metadata.
+* **Member 4 (Reporting UI & Phase 2 Pipelines):** * Build the CLI dashboard in `src/controllers/reporting.py` to query PostgreSQL and render the final formatted console output.
     * Begin scaffolding Hive and MongoDB pipelines for Phase 2.

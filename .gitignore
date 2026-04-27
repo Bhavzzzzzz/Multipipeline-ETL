@@ -8,6 +8,7 @@ utiloutput.txt
 __pycache__/
 *.pyc
 .pytest_cache/
+venv/
 
 # Java/Maven targets (for Member 2)
 target/
