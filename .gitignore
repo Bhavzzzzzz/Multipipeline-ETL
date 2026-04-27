@@ -1,8 +1,7 @@
 # .gitignore
 
 # Ignore raw data and generated output batches
-data/raw/
-data/output/
+data
 utiloutput.txt
 
 # Python cache
