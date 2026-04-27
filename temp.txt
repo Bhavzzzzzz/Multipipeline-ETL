@@ -1,0 +1,94 @@
+DAS839-ETL-Project/
+│
+├── README.md                  # Setup instructions, architecture overview, and team member roles
+├── .gitignore                 # Crucial: Ignore large data files, compiled jars, and virtual environments
+│
+├── data/                      # Local testing only (DO NOT PUSH TO GITHUB)
+│   ├── raw/                   # Downloaded NASA log files (.gz or .txt)
+│   └── output/                # Temporary local output from pipelines before DB loading
+│
+├── database/                  # PostgreSQL related files
+│   ├── schema.sql             # SQL script to create tables (Runs, Query1, Query2, Query3)
+│   └── test_queries.sql       # Optional: SQL scripts to verify loaded data
+│
+├── src/                       # Main source code directory
+│   │
+│   ├── controller/            # The Python Orchestrator (Phase 1 & 2)
+│   │   ├── main.py            # Entry point: Renders CLI UI and handles user selection
+│   │   ├── db_client.py       # Handles PostgreSQL connections and inserts
+│   │   ├── reporting.py       # Fetches final results from DB and prints formatted tables
+│   │   └── utils.py           # Shared helper functions (e.g., timer, batch calculator)
+│   │
+│   ├── pipelines/             # The 4 Execution Engines
+│   │   │
+│   │   ├── mapreduce/         # Phase 1: Native Java
+│   │   │   ├── pom.xml        # Maven dependencies (Hadoop Core)
+│   │   │   └── src/main/java/com/team/etl/
+│   │   │       ├── LogDriver.java
+│   │   │       ├── LogMapper.java
+│   │   │       └── LogReducer.java
+│   │   │
+│   │   ├── pig/               # Phase 2: Apache Pig
+│   │   │   └── queries.pig    # Pig Latin script for parsing and aggregations
+│   │   │
+│   │   ├── hive/              # Phase 2: Apache Hive
+│   │   │   ├── create_tables.hql # External table definitions
+│   │   │   └── queries.hql    # HiveQL analytical queries
+│   │   │
+│   │   └── mongodb/           # Phase 2: MongoDB
+│   │       ├── mongo_ingest.py # Python script to parse logs and load to Mongo collections
+│   │       └── aggregations.py # Python dictionaries containing the Mongo Aggregation pipelines
+│
+└── docs/                      # Project deliverables
+    ├── phase1_presentation.pdf
+    └── phase2_final_report.pdf
+
+folder structure @71103183626394 ye follow kar lena for github repo
+
+
+
+Here is the complete Phase 1 roadmap, mapping each team member's responsibilities directly to the exact files they need to create and edit in your repository. 
+
+### **Member 1: Data & Batching Lead**
+**Focus:** Data ingestion, universal parsing rules, and batch splitting.
+* **Files to Edit:**
+    * `src/controller/utils.py` (or a dedicated `batch_processor.py`)
+    * `.gitignore`
+* **Roadmap:**
+    1. Download the NASA logs and place them locally in `data/raw/`.
+    2. Immediately update the `.gitignore` to ensure those massive `data/raw/` and `data/output/` files are never committed to GitHub.
+    3. Finalize the master Regex parsing string that cleanly extracts all required fields. 
+    4. Write the Python logic in `utils.py` that reads the raw logs and splits them into smaller, sequentially numbered batch files (e.g., `batch_1.txt`, `batch_2.txt`).
+
+### **Member 2: MapReduce Core Developer**
+**Focus:** The Java execution engine running in local Standalone mode.
+* **Files to Edit:**
+    * `src/pipelines/mapreduce/pom.xml`
+    * `src/pipelines/mapreduce/src/main/java/com/team/etl/LogDriver.java`
+    * `src/pipelines/mapreduce/src/main/java/com/team/etl/LogMapper.java`
+    * `src/pipelines/mapreduce/src/main/java/com/team/etl/LogReducer.java`
+* **Roadmap:**
+    1. Define the Hadoop Core dependencies in `pom.xml`.
+    2. Write the `LogMapper.java` utilizing Member 1's exact Regex. Implement Hadoop Counters to track malformed records and handle the missing byte (0) logic.
+    3. Write the `LogReducer.java` to aggregate the data for Queries 1, 2, and 3.
+    4. Configure `LogDriver.java` to accept local file paths (`file:///`) for input and output, bypassing HDFS entirely. Compile this into the final executable `.jar`.
+
+### **Member 3: Database & Analytics Lead**
+**Focus:** Relational storage, schema design, and Python ingestion.
+* **Files to Edit:**
+    * `database/schema.sql`
+    * `src/controller/db_client.py`
+* **Roadmap:**
+    1. Install and configure PostgreSQL (spinning this up within a WSL/Ubuntu environment keeps the local networking and port management very clean).
+    2. Write `schema.sql`. Given the need to evaluate query logic and maintain data integrity, carefully design the tables so the mandatory outputs perfectly map to the `Run_Metadata` (batch ID, pipeline, runtime).
+    3. Write the Python functions in `db_client.py` using `psycopg2` to read the MapReduce output text files and execute the `INSERT` statements.
+
+### **Member 4: Orchestrator & UI Lead**
+**Focus:** The central Python controller, system integration, and final reporting.
+* **Files to Edit:**
+    * `src/controller/main.py`
+    * `src/controller/reporting.py`
+* **Roadmap:**
+    1. Build the interactive terminal interface in `main.py` where the user selects the pipeline and batch size.
+    2. Write the `subprocess` logic in `main.py` to trigger Member 1's batcher, then execute Member 2's Java `.jar`, and finally call Member 3's `db_client.py` insertion functions. Manage the runtime timers here.
+    3. Write `reporting.py` to connect to PostgreSQL, fetch the final statistics, and print the beautifully formatted tables and execution metadata to the console.

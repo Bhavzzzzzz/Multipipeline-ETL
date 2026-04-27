@@ -98,14 +98,14 @@ python3 --version
 psql --version
 ```
 
-3) Create and activate a Python virtualenv for controller development, then install the DB driver:
+3) Create and activate a Python virtualenv for controller development, then install the dependencies:
 
 ```bash
 cd /mnt/c/Codes/Multipipeline-ETL
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install psycopg2-binary
+pip install -r requirements.txt
 ```
 
 4) Install Apache Pig system-wide under `/opt` (example uses Pig 0.18.0):
@@ -171,69 +171,44 @@ sudo -u postgres psql -d nosql_project -f database/reset_and_create.sql
 sudo -u postgres psql -d nosql_project -c "\dt"
 ```
 
-6) Quick local run (after environment ready)
+6) Launch the Orchestrator CLI (Recommended)
+
+The reporting dashboard is the central entry point for the project. It handles environment checks, pipeline execution, and final data visualization.
 
 ```bash
 source .venv/bin/activate
+# Ensure environment variables are exported (see below)
+python src/controllers/reporting.py
+```
+
+### 7) Manual execution (Advanced)
+
+If you prefer to run the orchestrator directly without the interactive CLI:
+
+```bash
+python src/controllers/main.py --pipeline pig --batch-size 100000 --input data/raw/access_log_Jul95
+```
+
+---
+
+## 🚀 Environment Variables
+
+Before running `reporting.py`, ensure the following variables are set in your session. You can add these to your `.bashrc` or a `.env` file:
+
+```bash
+# Database
 export PGDATABASE=nosql_project
 export PGUSER=postgres
 export PGPASSWORD='your_password'
 export PGHOST=localhost
 export PGPORT=5432
+
+# Big Data Tools
 export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 export PIG_HOME=/opt/pig-0.18.0
 export PATH="$JAVA_HOME/bin:$PIG_HOME/bin:$PATH"
 export PIG_CLASSPATH=/usr/share/java/commons-text.jar:/usr/share/java/commons-compress.jar:/usr/share/java/commons-lang3.jar:$PIG_CLASSPATH
-
-python src/controllers/main.py --pipeline pig --batch-size 1000 --input data/raw/access_log_Jul95
 ```
-
-If you want to run both NASA files together, concatenate them first:
-
-```bash
-cat data/raw/access_log_Jul95 data/raw/access_log_Aug95 > data/raw/access_log_combined.txt
-python src/controllers/main.py --pipeline pig --batch-size 1000 --input data/raw/access_log_combined.txt
-```
-
-### Reset and rerun
-
-When you want a clean database before testing again:
-
-```bash
-sudo -u postgres psql -d nosql_project -f database/reset_and_create.sql
-python src/controllers/main.py --pipeline pig --batch-size 1000 --input data/raw/access_log_Jul95
-```
-
-### Output verification
-
-After a successful run, check the tables with:
-
-```bash
-sudo -u postgres psql -d nosql_project -c "SELECT * FROM run_metadata ORDER BY run_id DESC LIMIT 5;"
-sudo -u postgres psql -d nosql_project -c "SELECT COUNT(*) FROM daily_traffic;"
-sudo -u postgres psql -d nosql_project -c "SELECT COUNT(*) FROM top_resources;"
-sudo -u postgres psql -d nosql_project -c "SELECT COUNT(*) FROM hourly_errors;"
-```
-
-### 1. Data Preparation
-Create the required local directories (these are ignored by `.gitignore`) and place the extracted NASA logs in `data/raw/`:
-
-```bash
-mkdir -p data/raw data/output
-# expected extracted filenames:
-# data/raw/access_log_Jul95
-# data/raw/access_log_Aug95
-```
-
-### 2. Running the Pipeline (Phase 1)
-To execute the ETL flow using the Apache Pig pipeline, use the Python orchestrator:
-
-```bash
-python src/controllers/main.py --pipeline pig --batch-size 1000 --input data/raw/access_log_Jul95
-```
-
-### 3. Output
-The orchestrator will output batch results into `data/output/pig_results/batch_<id>/` and generate a final console execution report measuring total runtime, total records, malformed-record count, and batch statistics.
 
 ---
 
@@ -244,22 +219,17 @@ To keep development clean and prevent merge conflicts, responsibilities are divi
 * **Member 1 (Data & Controller):** * Design the master regex for log parsing.
     * Build the core `main.py` Python orchestrator to handle physical file batching and sequential execution triggering. *(Completed)*
 * **Member 2 (Pig Pipeline):** * Write the Apache Pig scripts (`queries.pig`) to handle the ETL aggregations for all three queries. *(Completed)*
-* **Member 3 (Database & Ingestion):** * **[Completed]** Design the PostgreSQL schema for the three queries (`database/schema.sql`) and reset script (`database/reset_and_create.sql`).
-    * Implement `src/controllers/db_client.py` using `psycopg2`.
-    * Hook the ingestion function into the `trigger_db_load()` handoff point inside `src/controllers/main.py`.
-* **Member 4 (Reporting UI & Phase 2 Pipelines):** * **[NEXT STEP]** Build the CLI dashboard in `src/controllers/reporting.py` to query PostgreSQL and render the final formatted console output.
-    * Edit `src/controllers/reporting.py` for the reporting CLI.
-    * Keep the phase-2 pipeline structure aligned with the existing Pig flow.
+* **Member 3 (Database & Ingestion):** * Design the PostgreSQL schema for the three queries (`database/schema.sql`) and reset script (`database/reset_and_create.sql`). *(Completed)*
+    * Implement `src/controllers/db_client.py` using `psycopg2`. *(Completed)*
+* **Member 4 (Reporting UI & Orchestration):** * **[COMPLETED]** Build the CLI dashboard in `src/controllers/reporting.py` to orchestrate pipeline execution and render the final formatted console output.
+    * Extended `db_client.py` with reporting fetch functions.
+    * Finalized system integration and README documentation.
 
-### Member 4 CLI context
+### Member 4 CLI Flow
 
-The reporting/controller CLI should follow this flow:
+The reporting CLI (`src/controllers/reporting.py`) follows this flow:
 
-1. Ask the user to set up the required environment variables first (`PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGHOST`, `PGPORT`, `JAVA_HOME`, `PIG_HOME`, `PATH`, and `PIG_CLASSPATH`).
-2. Show a simple menu where the user selects one option by typing `1`, `2`, `3`, or `4`.
-3. Prompt for the batch size after a pipeline is selected.
-4. Execute the chosen pipeline after the batch size is confirmed.
-
-For the current phase, only Pig should be fully wired. MapReduce, Hive, and MongoDB can remain placeholders in the menu for now, but the CLI should still reserve those options so the final interface stays consistent with the four-pipeline project scope.
-
-The intended implementation file for this flow is `src/controllers/reporting.py`.
+1. **Environment Check:** Alerts the user if critical variables (`PGPASSWORD`, `PIG_HOME`, etc.) are missing.
+2. **Main Menu:** Allows selection of Pig (Ready) or Phase 2 placeholders (MapReduce, Hive, MongoDB).
+3. **Execution:** Prompts for batch size and input file, then triggers the orchestrator.
+4. **Reporting:** Automatically fetches results from PostgreSQL and renders formatted tables for Query 1, 2, and 3.
