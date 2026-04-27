@@ -24,6 +24,41 @@ The framework is orchestrated by a Python controller that physically batches the
     * **Phase 2:** Apache Hive & MongoDB.
 3. **Reporting Database (PostgreSQL):** Stores the final aggregated query results alongside execution metadata (pipeline name, run identifier, batch ID, batch size, runtime, and malformed-record count).
 
+## 📁 File Structure
+
+```text
+Multipipeline-ETL/
+├── README.md
+├── temp.md
+├── data/
+│   ├── raw/
+│   └── output/
+├── database/
+│   ├── schema.sql
+│   ├── reset_and_create.sql
+│   └── test_queries.sql
+├── docs/
+│   └── NoSQL26_ET_project_statement.pdf
+└── src/
+    ├── controllers/
+    │   ├── main.py
+    │   ├── utils.py
+    │   └── db_client.py
+    └── pipelines/
+        ├── pig/
+        ├── hive/
+        ├── mongodb/
+        └── mapreduce/
+```
+
+The key files for the current phase are:
+
+* `src/controllers/main.py` - orchestrates batching, Pig execution, and DB loading.
+* `src/controllers/utils.py` - parses log lines and creates batches from the raw input files.
+* `src/controllers/db_client.py` - loads Pig results into PostgreSQL.
+* `src/pipelines/pig/queries.pig` - performs the Pig ETL and aggregation work.
+* `database/schema.sql` and `database/reset_and_create.sql` - define and recreate the reporting schema.
+
 ---
 
 ## 🔍 Analytical Workload
@@ -209,8 +244,22 @@ To keep development clean and prevent merge conflicts, responsibilities are divi
 * **Member 1 (Data & Controller):** * Design the master regex for log parsing.
     * Build the core `main.py` Python orchestrator to handle physical file batching and sequential execution triggering. *(Completed)*
 * **Member 2 (Pig Pipeline):** * Write the Apache Pig scripts (`queries.pig`) to handle the ETL aggregations for all three queries. *(Completed)*
-* **Member 3 (Database & Ingestion):** * **[NEXT STEP]** Design the PostgreSQL schema for the three queries (`database/schema.sql`) and reset script (`database/reset_and_create.sql`).
+* **Member 3 (Database & Ingestion):** * **[Completed]** Design the PostgreSQL schema for the three queries (`database/schema.sql`) and reset script (`database/reset_and_create.sql`).
     * Implement `src/controllers/db_client.py` using `psycopg2`.
-    * *Integration note:* Hook your ingestion function into the `trigger_db_load()` handoff point inside `src/controllers/main.py`. The controller passes the `batch_id`, the directory containing the Pig CSV outputs, and a dictionary of run metadata.
-* **Member 4 (Reporting UI & Phase 2 Pipelines):** * Build the CLI dashboard in `src/controllers/reporting.py` to query PostgreSQL and render the final formatted console output.
-    * Begin scaffolding Hive and MongoDB pipelines for Phase 2.
+    * Hook the ingestion function into the `trigger_db_load()` handoff point inside `src/controllers/main.py`.
+* **Member 4 (Reporting UI & Phase 2 Pipelines):** * **[NEXT STEP]** Build the CLI dashboard in `src/controllers/reporting.py` to query PostgreSQL and render the final formatted console output.
+    * Edit `src/controllers/reporting.py` for the reporting CLI.
+    * Keep the phase-2 pipeline structure aligned with the existing Pig flow.
+
+### Member 4 CLI context
+
+The reporting/controller CLI should follow this flow:
+
+1. Ask the user to set up the required environment variables first (`PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGHOST`, `PGPORT`, `JAVA_HOME`, `PIG_HOME`, `PATH`, and `PIG_CLASSPATH`).
+2. Show a simple menu where the user selects one option by typing `1`, `2`, `3`, or `4`.
+3. Prompt for the batch size after a pipeline is selected.
+4. Execute the chosen pipeline after the batch size is confirmed.
+
+For the current phase, only Pig should be fully wired. MapReduce, Hive, and MongoDB can remain placeholders in the menu for now, but the CLI should still reserve those options so the final interface stays consistent with the four-pipeline project scope.
+
+The intended implementation file for this flow is `src/controllers/reporting.py`.
