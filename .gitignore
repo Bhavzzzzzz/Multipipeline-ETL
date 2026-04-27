@@ -3,6 +3,7 @@
 # Ignore raw data and generated output batches
 data/raw/
 data/output/
+utiloutput.txt
 
 # Python cache
 __pycache__/
