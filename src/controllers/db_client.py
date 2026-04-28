@@ -201,5 +201,76 @@ def _bulk_insert(cursor, table_name, column_sql, rows):
     print(f"[SUCCESS] Staged {len(rows)} rows for {table_name}.")
 
 
+def get_latest_run_id(pipeline_name=None):
+    """Fetch the most recent run_id from the database."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        if pipeline_name:
+            cursor.execute(
+                "SELECT run_id FROM run_metadata WHERE pipeline_name = %s ORDER BY run_id DESC LIMIT 1;",
+                (pipeline_name,),
+            )
+        else:
+            cursor.execute("SELECT run_id FROM run_metadata ORDER BY run_id DESC LIMIT 1;")
+        
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as exc:
+        print(f"[ERROR] Failed to fetch latest run_id: {exc}")
+        return None
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
+            conn.close()
+
+
+def get_run_metadata(run_id):
+    """Fetch metadata for a specific run."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM run_metadata WHERE run_id = %s;", (run_id,))
+        columns = [desc[0] for desc in cursor.description]
+        result = cursor.fetchone()
+        return dict(zip(columns, result)) if result else None
+    except Exception as exc:
+        print(f"[ERROR] Failed to fetch run metadata for run_id={run_id}: {exc}")
+        return None
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
+            conn.close()
+
+
+def get_query_results(table_name, run_id, limit=20):
+    """Fetch aggregated results for a specific query and run."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        # Note: Using string formatting for table_name is safe here as it's internal
+        query = f"SELECT * FROM {table_name} WHERE run_id = %s ORDER BY id ASC LIMIT %s;"
+        cursor.execute(query, (run_id, limit))
+        columns = [desc[0] for desc in cursor.description]
+        results = cursor.fetchall()
+        return [dict(zip(columns, row)) for row in results]
+    except Exception as exc:
+        print(f"[ERROR] Failed to fetch results from {table_name} for run_id={run_id}: {exc}")
+        return []
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
+            conn.close()
+
+
 if __name__ == "__main__":
     print("Database client is ready to be imported by the orchestrator.")
