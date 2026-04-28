@@ -25,20 +25,26 @@ The framework is orchestrated by a Python controller that physically batches the
 3. **Reporting Database (PostgreSQL):** Stores the final aggregated query results alongside execution metadata (pipeline name, run identifier, batch ID, batch size, runtime, and malformed-record count).
 
 ## 📁 File Structure
-
 ```text
 Multipipeline-ETL/
 ├── README.md
 ├── temp.md
+├── .gitignore
 ├── data/
-│   ├── raw/
-│   └── output/
+│   ├── output/
+│   │   ├── pig_results/
+│   │   └── staging_batches/
+│   └── raw/
+│       ├── NASA_access_log_Aug95.gz
+│       ├── NASA_access_log_Jul95.gz
+│       ├── access_log_Aug95
+│       └── access_log_Jul95
 ├── database/
-│   ├── schema.sql
 │   ├── reset_and_create.sql
-│   └── test_queries.sql
+│   └── schema.sql
 ├── docs/
-│   └── NoSQL26_ET_project_statement.pdf
+│   ├── NoSQL26_ET_project_statement.pdf
+│   └── phase1_status.md
 └── src/
     ├── controllers/
     │   ├── main.py
@@ -46,9 +52,13 @@ Multipipeline-ETL/
     │   └── db_client.py
     └── pipelines/
         ├── pig/
+        │   └── queries.pig
         ├── hive/
-        ├── mongodb/
-        └── mapreduce/
+        │   └── test.py
+        ├── mapreduce/
+        │   └── test.py
+        └── mongodb/
+            └── test.py
 ```
 
 The key files for the current phase are:
