@@ -1,12 +1,18 @@
-# src/controller/main.py
+# src/controllers/main.py
 import os
 import shutil
 import subprocess
 import time
 import argparse
 
-import db_client
-from utils import process_and_batch_logs
+try:
+    # Use package-relative imports when executed as a package
+    from . import db_client
+    from .utils import process_and_batch_logs
+except Exception:
+    # Fallback for direct script execution / legacy PATH setups
+    import db_client
+    from utils import process_and_batch_logs
 
 def run_pig_pipeline(batch_path: str, output_dir: str):
     """Executes the Pig script via local system call."""
@@ -39,7 +45,7 @@ def main():
     parser = argparse.ArgumentParser(description="Multi-Pipeline ETL Orchestrator")
     parser.add_argument("--pipeline", choices=["pig", "hive", "mongodb"], default="pig", help="Select execution backend")
     parser.add_argument("--batch-size", type=int, default=100000, help="Number of records per batch")
-    parser.add_argument("--input", type=str, default="data/raw/NASA_access_log_Jul95.txt", help="Path to raw logs")
+    parser.add_argument("--input", type=str, default="data/raw/access_log_Jul95", help="Path to raw logs")
     args = parser.parse_args()
 
     staging_dir = "data/output/staging_batches"
