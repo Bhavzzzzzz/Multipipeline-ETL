@@ -35,3 +35,5 @@ Member contributions
 - Member 4 — Reporting UI & Integration:
   - Built the interactive CLI/ reporting layer `src/controllers/reporting.py` to run pipelines and render fetched results.
   - Documented setup and run instructions in `README.md` and supported integration with `db_client`.
+
+![alt text](<WhatsApp Image 2026-04-28 at 03.15.27.jpeg>)
