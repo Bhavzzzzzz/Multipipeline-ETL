@@ -102,8 +102,8 @@ psql --version
 
 ```bash
 cd /mnt/c/Codes/Multipipeline-ETL
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
@@ -176,7 +176,7 @@ sudo -u postgres psql -d nosql_project -c "\dt"
 The reporting dashboard is the central entry point for the project. It handles environment checks, pipeline execution, and final data visualization.
 
 ```bash
-source .venv/bin/activate
+source venv/bin/activate
 # Ensure environment variables are exported (see below)
 python src/controllers/reporting.py
 ```
