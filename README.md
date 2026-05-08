@@ -86,18 +86,21 @@ All pipelines must successfully compute the following three mandatory queries us
 * Java 11 (OpenJDK)
 * Python 3.8+
 * Apache Pig (Local Mode)
+* MongoDB (Running locally or accessible via URI)
 * PostgreSQL (Running inside WSL/Ubuntu or systemd Linux recommended)
 * `psycopg2` (Python library for PostgreSQL)
+* `pymongo` (Python library for MongoDB)
 
 ### Environment setup
 
 These commands install and configure the runtime used by this project. They assume a Debian/Ubuntu-style system and that you want a system-wide Apache Pig install under `/opt` (recommended).
 
-1) Install system packages (JDK, Python, Postgres tooling):
+1) Install system packages (JDK, Python, Postgres tooling, MongoDB):
 
 ```bash
 sudo apt update
-sudo apt install -y openjdk-11-jdk python3 python3-pip python3-venv postgresql postgresql-contrib wget curl tar
+sudo apt install -y openjdk-11-jdk python3 python3-pip python3-venv postgresql postgresql-contrib wget curl tar mongodb
+sudo service mongodb start
 ```
 
 2) Verify Java and Python:
@@ -196,7 +199,11 @@ python src/controllers/reporting.py
 If you prefer to run the orchestrator directly without the interactive CLI:
 
 ```bash
+# For Pig
 python src/controllers/main.py --pipeline pig --batch-size 100000 --input data/raw/access_log_Jul95
+
+# For MongoDB
+python src/controllers/main.py --pipeline mongodb --batch-size 100000 --input data/raw/access_log_Jul95
 ```
 
 ---
@@ -206,12 +213,16 @@ python src/controllers/main.py --pipeline pig --batch-size 100000 --input data/r
 Before running `reporting.py`, ensure the following variables are set in your session. You can add these to your `.bashrc` or a `.env` file:
 
 ```bash
-# Database
+# Database (PostgreSQL)
 export PGDATABASE=nosql_project
 export PGUSER=postgres
 export PGPASSWORD='your_password'
 export PGHOST=localhost
 export PGPORT=5432
+
+# MongoDB
+export MONGO_URI='mongodb://localhost:27017/'
+export MONGO_DB='nosql_project'
 
 # Big Data Tools
 export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64

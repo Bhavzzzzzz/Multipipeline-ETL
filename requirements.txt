@@ -1,2 +1,3 @@
 psycopg2-binary>=2.9.0
+pymongo>=4.0.0
 # Add other dependencies here if needed (currently the project uses mostly standard libraries)

@@ -34,6 +34,25 @@ def run_pig_pipeline(batch_path: str, output_dir: str):
         print(result.stderr)
         raise RuntimeError("Pig execution error")
 
+def run_mongodb_pipeline(batch_path: str, output_dir: str):
+    """Executes the MongoDB pipeline via a Python script."""
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    
+    cmd = [
+        "python", "src/pipelines/mongodb/pipeline.py",
+        batch_path,
+        output_dir
+    ]
+    
+    print(f"[*] Executing MongoDB pipeline for {os.path.basename(batch_path)}...")
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    
+    if result.returncode != 0:
+        print("[-] MongoDB Pipeline Failed!")
+        print(result.stderr)
+        raise RuntimeError("MongoDB execution error")
+
 def trigger_db_load(batch_id: int, output_dir: str, metadata: dict):
     """
     Handoff point for Member 3's PostgreSQL ingestion.
@@ -49,7 +68,7 @@ def main():
     args = parser.parse_args()
 
     staging_dir = "data/output/staging_batches"
-    base_output_dir = "data/output/pig_results"
+    base_output_dir = f"data/output/{args.pipeline}_results"
 
     if os.path.exists(staging_dir):
         shutil.rmtree(staging_dir)
@@ -87,6 +106,24 @@ def main():
             }
             
             # 3. Load into DB
+            run_id = trigger_db_load(batch_id, batch_output_dir, metadata)
+            batch_runtime = time.time() - batch_start
+            db_client.update_run_runtime(run_id, batch_runtime)
+        
+        elif args.pipeline == "mongodb":
+            batch_start = time.time()
+            run_mongodb_pipeline(batch_path, batch_output_dir)
+            
+            metadata = {
+                "pipeline_name": "MongoDB",
+                "run_identifier": f"run_{int(start_time)}",
+                "batch_id": batch_id,
+                "batch_size": records_in_batch,
+                "average_batch_size": avg_batch_size,
+                "runtime_seconds": None,
+                "malformed_record_count": malformed_in_batch,
+            }
+            
             run_id = trigger_db_load(batch_id, batch_output_dir, metadata)
             batch_runtime = time.time() - batch_start
             db_client.update_run_runtime(run_id, batch_runtime)
