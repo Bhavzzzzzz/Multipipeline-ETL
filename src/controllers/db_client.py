@@ -25,6 +25,38 @@ def get_connection():
         print(f"[ERROR] Could not connect to PostgreSQL: {e}")
         raise
 
+
+def _is_schema_initialized(cursor):
+    """Returns True when the core reporting schema has already been created."""
+    cursor.execute("SELECT to_regclass('public.run_metadata');")
+    return cursor.fetchone()[0] is not None
+
+
+def _create_schema(cursor):
+    """Creates the reporting schema from database/schema.sql if it does not exist."""
+    schema_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "database", "schema.sql")
+    )
+    if not os.path.exists(schema_path):
+        raise FileNotFoundError(f"Could not find schema file at {schema_path}")
+
+    with open(schema_path, "r", encoding="utf-8") as handle:
+        sql_text = handle.read()
+
+    for statement in [stmt.strip() for stmt in sql_text.split(";") if stmt.strip()]:
+        cursor.execute(statement + ";")
+
+    print(f"[INFO] Created PostgreSQL schema from {schema_path}")
+
+
+def _ensure_schema(cursor):
+    """Make sure the database has the required tables before ingesting results."""
+    if _is_schema_initialized(cursor):
+        return False
+    _create_schema(cursor)
+    return True
+
+
 def ingest_query_results(batch_output_dir, metadata):
     """Load run metadata and Pig query outputs for a single batch directory."""
     conn = None
@@ -33,6 +65,7 @@ def ingest_query_results(batch_output_dir, metadata):
         conn = get_connection()
         conn.autocommit = False
         cursor = conn.cursor()
+        _ensure_schema(cursor)
 
         run_id = _insert_run_metadata(cursor, metadata)
         daily_rows = _read_daily_traffic_rows(_resolve_query_output(batch_output_dir, "query1"), run_id)

@@ -58,6 +58,34 @@ def run_mapreduce_pipeline(batch_path: str, output_dir: str):
         print(result.stderr)
         raise RuntimeError("MapReduce execution error")
 
+def run_hive_pipeline(batch_path: str, output_dir: str):
+    """Executes the Hive script via local system call."""
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+        
+    cmd = [
+        "hive", "-f", "src/pipelines/hive/queries.hql",
+        "-hiveconf", f"INPUT={batch_path}",
+        "-hiveconf", f"OUTPUT_DIR={output_dir}"
+    ]
+    
+    print(f"[*] Executing Hive pipeline for {os.path.basename(batch_path)}...")
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    
+    if result.returncode != 0:
+        print("[-] Hive Job Failed!")
+        print(result.stderr)
+        raise RuntimeError("Hive execution error")
+        
+    # FIX: Rename Hive's default '000000_0' output files to 'part-00000' 
+    # so db_client.py can find and ingest them properly.
+    for query_folder in ["query1", "query2", "query3"]:
+        folder_path = os.path.join(output_dir, query_folder)
+        if os.path.exists(folder_path):
+            hive_file = os.path.join(folder_path, "000000_0")
+            if os.path.exists(hive_file):
+                os.rename(hive_file, os.path.join(folder_path, "part-00000"))
+
 def trigger_db_load(batch_id: int, output_dir: str, metadata: dict):
     """
     PostgreSQL ingestion.
@@ -69,7 +97,7 @@ def main():
     parser = argparse.ArgumentParser(description="Multi-Pipeline ETL Orchestrator")
     parser.add_argument("--pipeline", choices=["pig", "mapreduce", "hive", "mongodb"], default="pig", help="Select execution backend")
     parser.add_argument("--batch-size", type=int, default=100000, help="Number of records per batch")
-    parser.add_argument("--input", type=str, default="data/raw/access_log_Jul95", help="Path to raw logs")
+    parser.add_argument("--input", type=str, default="data/raw/access_log_Jul95.gz", help="Path to raw logs")
     args = parser.parse_args()
 
     staging_dir = "data/output/staging_batches"
@@ -112,12 +140,18 @@ def main():
         elif args.pipeline == "mapreduce":
             batch_start = time.time()
             run_mapreduce_pipeline(batch_path, batch_output_dir)
+        elif args.pipeline == "hive":            
+            batch_start = time.time()            
+            run_hive_pipeline(batch_path, batch_output_dir)
         else:
             raise NotImplementedError(f"{args.pipeline} pipeline is not implemented yet")
 
         # Formulate metadata to pass down to the database script
+        pipeline_display_name = args.pipeline.capitalize()
+        if pipeline_display_name == "Mapreduce": pipeline_display_name = "MapReduce"
+
         metadata = {
-            "pipeline_name": "MapReduce" if args.pipeline == "mapreduce" else "Pig", # FIX THIS PROPERLY IG
+            "pipeline_name": pipeline_display_name, # FIX THIS PROPERLY IG
             "run_identifier": f"run_{int(start_time)}",
             "batch_id": batch_id,
             "batch_size": records_in_batch,
