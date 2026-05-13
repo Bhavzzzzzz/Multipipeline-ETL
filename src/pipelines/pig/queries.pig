@@ -21,7 +21,7 @@ parsed_logs = FOREACH raw_logs GENERATE
     );
 
 -- 3. Clean and Transform
--- Drop malformed rows and handle the '-' in bytes as 0[cite: 27, 31].
+-- Drop malformed rows and handle the '-' in bytes as 0.
 clean_logs = FOREACH parsed_logs GENERATE 
     host, log_date, log_hour, http_method, resource_path, protocol_version, status_code,
     (bytes_str == '-' ? 0 : (int)bytes_str) AS bytes_transferred;
@@ -29,7 +29,7 @@ clean_logs = FOREACH parsed_logs GENERATE
 valid_logs = FILTER clean_logs BY host IS NOT NULL;
 
 -- ==============================================================================
--- Query 1: Daily Traffic Summary [cite: 44, 45, 46, 47]
+-- Query 1: Daily Traffic Summary
 -- ==============================================================================
 q1_group = GROUP valid_logs BY (log_date, status_code);
 q1_result = FOREACH q1_group GENERATE 
@@ -40,7 +40,7 @@ q1_result = FOREACH q1_group GENERATE
 STORE q1_result INTO '$OUTPUT_DIR/query1' USING PigStorage(',');
 
 -- ==============================================================================
--- Query 2: Top Requested Resources [cite: 48, 49, 50, 51, 52]
+-- Query 2: Top Requested Resources
 -- ==============================================================================
 q2_group = GROUP valid_logs BY resource_path;
 q2_agg = FOREACH q2_group {
@@ -57,7 +57,7 @@ q2_top20 = LIMIT q2_ordered 20;
 STORE q2_top20 INTO '$OUTPUT_DIR/query2' USING PigStorage(',');
 
 -- ==============================================================================
--- Query 3: Hourly Error Analysis [cite: 53, 54, 55, 56]
+-- Query 3: Hourly Error Analysis
 -- ==============================================================================
 -- Flag errors to make the conditional aggregations cleaner
 flagged_logs = FOREACH valid_logs GENERATE 

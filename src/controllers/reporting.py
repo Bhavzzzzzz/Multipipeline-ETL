@@ -6,7 +6,7 @@ import time
 import db_client
 
 def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
+    subprocess.run('cls' if os.name == 'nt' else 'clear')
 
 def print_header(title):
     print("\n" + "="*80)
@@ -33,7 +33,7 @@ def show_menu():
     print_header("NASA LOG ANALYTICS - MULTI-PIPELINE ETL")
     print(" Select an execution pipeline:")
     print("  1. Apache Pig (Ready)")
-    print("  2. MapReduce  (Phase 2 Placeholder)")
+    print("  2. MapReduce  (Ready)")
     print("  3. Apache Hive (Phase 2 Placeholder)")
     print("  4. MongoDB     (Phase 2 Placeholder)")
     print("  5. View Latest Report Only")
@@ -45,7 +45,7 @@ def run_pipeline(pipeline_name):
     print_header(f"LAUNCHING {pipeline_name.upper()} PIPELINE")
     
     # Validation for placeholders
-    if pipeline_name in ["mapreduce", "hive", "mongodb"]:
+    if pipeline_name in ["hive", "mongodb"]:
         print(f"[-] {pipeline_name.capitalize()} pipeline is currently a placeholder for Phase 2.")
         time.sleep(2)
         return False
@@ -146,7 +146,7 @@ def generate_report(run_id=None):
 def main():
     check_env()
     while True:
-        clear_screen()
+        # clear_screen()
         choice = show_menu()
         
         if choice == '1':

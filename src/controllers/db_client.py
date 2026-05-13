@@ -114,7 +114,7 @@ def _insert_run_metadata(cursor, metadata):
     cursor.execute(
         query,
         (
-            metadata.get("pipeline_name", "Pig"),
+            metadata.get("pipeline_name", "pipeline_unkown"),
             metadata.get("run_identifier", "run_unknown"),
             metadata.get("batch_id"),
             metadata.get("batch_size"),
