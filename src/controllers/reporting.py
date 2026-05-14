@@ -96,7 +96,7 @@ def show_menu():
     print("  1. Apache Pig (Ready)")
     print("  2. MapReduce  (Ready)")
     print("  3. Apache Hive (Ready)")
-    print("  4. MongoDB     (Phase 2 Placeholder)")
+    print("  4. MongoDB     (Ready)")
     print("  5. View Latest Report Only")
     print("  q. Quit")
     choice = input("\nEnter choice [1-5 or q]: ").strip().lower()
@@ -106,7 +106,7 @@ def run_pipeline(pipeline_name):
     print_header(f"LAUNCHING {pipeline_name.upper()} PIPELINE")
     
     # Validation for placeholders
-    if pipeline_name in ["mongodb"]:
+    if pipeline_name in ["mapreduce", "hive", "mongodb"]:
         print(f"[-] {pipeline_name.capitalize()} pipeline is currently a placeholder for Phase 2.")
         time.sleep(2)
         return False
@@ -220,7 +220,8 @@ def main():
         elif choice == '3':
             run_pipeline("hive")
         elif choice == '4':
-            run_pipeline("mongodb")
+            if run_pipeline("mongodb"):
+                generate_report()
         elif choice == '5':
             generate_report()
         elif choice == 'q':

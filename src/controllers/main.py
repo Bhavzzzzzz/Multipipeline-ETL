@@ -86,6 +86,25 @@ def run_hive_pipeline(batch_path: str, output_dir: str):
             if os.path.exists(hive_file):
                 os.rename(hive_file, os.path.join(folder_path, "part-00000"))
 
+def run_mongodb_pipeline(batch_path: str, output_dir: str):
+    """Executes the MongoDB pipeline via a Python script."""
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    
+    cmd = [
+        "python", "src/pipelines/mongodb/pipeline.py",
+        batch_path,
+        output_dir
+    ]
+    
+    print(f"[*] Executing MongoDB pipeline for {os.path.basename(batch_path)}...")
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    
+    if result.returncode != 0:
+        print("[-] MongoDB Pipeline Failed!")
+        print(result.stderr)
+        raise RuntimeError("MongoDB execution error")
+
 def trigger_db_load(batch_id: int, output_dir: str, metadata: dict):
     """
     PostgreSQL ingestion.
@@ -143,10 +162,14 @@ def main():
         elif args.pipeline == "hive":            
             batch_start = time.time()            
             run_hive_pipeline(batch_path, batch_output_dir)
+        elif args.pipeline == "mongodb":
+            batch_start = time.time()
+            run_mongodb_pipeline(batch_path, batch_output_dir)
         else:
             raise NotImplementedError(f"{args.pipeline} pipeline is not implemented yet")
 
         # Formulate metadata to pass down to the database script
+        # TODO: check if the below actually works
         pipeline_display_name = args.pipeline.capitalize()
         if pipeline_display_name == "Mapreduce": pipeline_display_name = "MapReduce"
 
