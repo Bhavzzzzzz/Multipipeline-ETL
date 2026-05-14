@@ -13,9 +13,11 @@ COMMIT;
 CREATE TABLE run_metadata (
     run_id SERIAL PRIMARY KEY,
     pipeline_name VARCHAR(50) NOT NULL,
+    query_name VARCHAR(20) NOT NULL,
     run_identifier VARCHAR(100) NOT NULL,
     batch_id INT NOT NULL,
     batch_size INT,
+    records_processed INT NOT NULL DEFAULT 0,
     average_batch_size NUMERIC(10, 2),
     runtime_seconds NUMERIC(10, 2),
     malformed_record_count INT NOT NULL DEFAULT 0,

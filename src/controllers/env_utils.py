@@ -1,4 +1,5 @@
 import os
+import importlib.util
 import shutil
 
 
@@ -21,6 +22,10 @@ PIPELINE_ENV_GROUPS = {
 PIPELINE_COMMANDS = {
     "pig": ["pig"],
     "hive": ["hadoop"],
+}
+
+PIPELINE_PYTHON_MODULES = {
+    "mongodb": ["pymongo"],
 }
 
 PIPELINE_DISPLAY_NAMES = {
@@ -64,6 +69,15 @@ def missing_commands_for_pipeline(pipeline_name):
     ]
 
 
+def missing_python_modules_for_pipeline(pipeline_name):
+    modules = PIPELINE_PYTHON_MODULES.get(pipeline_name, [])
+    return [
+        module_name
+        for module_name in modules
+        if importlib.util.find_spec(module_name) is None
+    ]
+
+
 def missing_commands_for_all_pipelines():
     hive_command = os.getenv("HIVE_BIN", "hive")
     hive_home = os.getenv("HIVE_HOME")
@@ -86,14 +100,18 @@ def all_environment_issues():
 
 
 def pipeline_environment_issues(pipeline_name):
-    return missing_env_for_pipeline(pipeline_name), missing_commands_for_pipeline(pipeline_name)
+    return (
+        missing_env_for_pipeline(pipeline_name),
+        missing_commands_for_pipeline(pipeline_name),
+        missing_python_modules_for_pipeline(pipeline_name),
+    )
 
 
-def has_environment_issues(missing_by_group, missing_commands):
-    return bool(missing_by_group or missing_commands)
+def has_environment_issues(missing_by_group, missing_commands, missing_python_modules=None):
+    return bool(missing_by_group or missing_commands or missing_python_modules)
 
 
-def print_environment_issues(missing_by_group, missing_commands, warning=False):
+def print_environment_issues(missing_by_group, missing_commands, missing_python_modules=None, warning=False):
     label = "WARNING: " if warning else ""
     if missing_by_group:
         print(f"[-] {label}The following environment variables are missing:")
@@ -105,17 +123,23 @@ def print_environment_issues(missing_by_group, missing_commands, warning=False):
         for command in missing_commands:
             print(f"    - {command}")
 
+    if missing_python_modules:
+        print(f"\n[-] {label}The following Python packages are not installed in this interpreter:")
+        for module_name in missing_python_modules:
+            print(f"    - {module_name}")
+        print("    Run: python -m pip install -r requirements.txt")
+
     print("\n[!] Please ensure PostgreSQL, Pig, Hadoop, Hive, and MongoDB are configured as needed.")
     print("[!] Source setup.sh or refer to README.md for setup instructions.")
 
 
 def validate_runtime_environment(pipeline_name):
     """Fail early when the selected pipeline cannot find its configured runtime."""
-    missing_by_group, missing_commands = pipeline_environment_issues(pipeline_name)
+    missing_by_group, missing_commands, missing_python_modules = pipeline_environment_issues(pipeline_name)
 
-    if not has_environment_issues(missing_by_group, missing_commands):
+    if not has_environment_issues(missing_by_group, missing_commands, missing_python_modules):
         return
 
     print("[-] Runtime environment is not fully configured.")
-    print_environment_issues(missing_by_group, missing_commands)
+    print_environment_issues(missing_by_group, missing_commands, missing_python_modules)
     raise EnvironmentError(f"{pipeline_name} runtime environment is incomplete")

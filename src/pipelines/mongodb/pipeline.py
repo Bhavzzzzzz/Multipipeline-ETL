@@ -6,7 +6,7 @@ from pymongo import MongoClient
 
 # Master Regex for NASA HTTP Logs (Common Log Format)
 LOG_REGEX = re.compile(
-    r'^(?P<host>\S+)\s+\S+\s+\S+\s+\[(?P<timestamp>[^\]]+)\]\s+"(?P<request>[^"]*)"\s+(?P<status>\d{3})\s+(?P<bytes>\d+|-)$'
+    r'^(?P<host>\S+)\s+\S+\s+\S+\s+\[(?P<log_date>\d{2}/\w{3}/\d{4}):(?P<log_hour>\d{2}):\d{2}:\d{2}\s+[^\]]+\]\s+"(?:(?P<http_method>\S+)\s+(?P<resource_path>\S+)\s+(?P<protocol_version>\S+)|.*)"\s+(?P<status>\d{3})\s+(?P<bytes>\d+|-)$'
 )
 
 def parse_log_line(line):
@@ -16,32 +16,28 @@ def parse_log_line(line):
         return None
 
     data = match.groupdict()
-    
-    try:
-        raw_timestamp = data['timestamp']
-        log_date = raw_timestamp.split(':')[0]
-        log_hour = raw_timestamp.split(':')[1]
-    except IndexError:
-        return None
-
-    request_parts = data['request'].split()
-    if len(request_parts) == 3:
-        http_method, resource_path, protocol_version = request_parts
-    elif len(request_parts) == 2:
-        http_method, resource_path = request_parts
-        protocol_version = "UNKNOWN"
-    else:
+    required_fields = [
+        "host",
+        "log_date",
+        "log_hour",
+        "http_method",
+        "resource_path",
+        "protocol_version",
+        "status",
+        "bytes",
+    ]
+    if any(data[field] is None or data[field] == "" for field in required_fields):
         return None
 
     bytes_transferred = 0 if data['bytes'] == '-' else int(data['bytes'])
 
     return {
         "host": data['host'],
-        "log_date": log_date,
-        "log_hour": log_hour,
-        "http_method": http_method,
-        "resource_path": resource_path,
-        "protocol_version": protocol_version,
+        "log_date": data['log_date'],
+        "log_hour": data['log_hour'],
+        "http_method": data['http_method'],
+        "resource_path": data['resource_path'],
+        "protocol_version": data['protocol_version'],
         "status_code": int(data['status']),
         "bytes_transferred": bytes_transferred
     }
@@ -91,7 +87,8 @@ def run_pipeline(input_path, output_dir):
                 "request_count": 1,
                 "total_bytes": 1
             }
-        }
+        },
+        {"$sort": {"log_date": 1, "status_code": 1}}
     ])
     
     with open(os.path.join(output_dir, "query1"), 'w', newline='', encoding='utf-8') as f:
@@ -118,7 +115,7 @@ def run_pipeline(input_path, output_dir):
                 "distinct_host_count": {"$size": "$distinct_hosts"}
             }
         },
-        {"$sort": {"request_count": -1}},
+        {"$sort": {"request_count": -1, "resource_path": 1}},
         {"$limit": 20}
     ])
     
@@ -163,7 +160,8 @@ def run_pipeline(input_path, output_dir):
                 "error_rate": {"$divide": ["$error_request_count", "$total_request_count"]},
                 "distinct_error_hosts": {"$size": "$error_hosts"}
             }
-        }
+        },
+        {"$sort": {"log_date": 1, "log_hour": 1}}
     ])
     
     with open(os.path.join(output_dir, "query3"), 'w', newline='', encoding='utf-8') as f:

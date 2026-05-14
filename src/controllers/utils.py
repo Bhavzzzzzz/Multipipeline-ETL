@@ -9,54 +9,22 @@ LOG_REGEX = re.compile(
     r'^(?P<host>\S+)\s+\S+\s+\S+\s+\[(?P<timestamp>[^\]]+)\]\s+"(?P<request>[^"]*)"\s+(?P<status>\d{3})\s+(?P<bytes>\d+|-)$'
 )
 
-def parse_log_line(line):
-    """
-    Parses a single log line, extracts required fields, and handles missing data.
-    Returns a formatted string or None if malformed.
-    """
+def _is_valid_log_line(line):
+    """Return True when a raw log line matches the expected NASA log shape."""
     match = LOG_REGEX.match(line)
     if not match:
-        return None
+        return False
 
     data = match.groupdict()
-    
-    # Handle timestamp -> log_date and log_hour
-    # Timestamp format: 01/Jul/1995:00:00:01 -0400
+
     raw_timestamp = data['timestamp']
     try:
-        # Extract date (DD/MMM/YYYY) and hour (HH)
-        log_date = raw_timestamp.split(':')[0]
         log_hour = raw_timestamp.split(':')[1]
     except IndexError:
-        return None
+        return False
 
-    # Handle request -> http_method, resource_path, protocol_version
     request_parts = data['request'].split()
-    if len(request_parts) == 3:
-        http_method, resource_path, protocol_version = request_parts
-    elif len(request_parts) == 2:
-        http_method, resource_path = request_parts
-        protocol_version = "UNKNOWN"
-    else:
-        # Malformed request string
-        return None
-
-    # Handle missing bytes ('-') by treating as '0'
-    bytes_transferred = '0' if data['bytes'] == '-' else data['bytes']
-
-    # Assemble the final structured record (Tab-separated for easy MapReduce parsing)
-    structured_record = (
-        f"{data['host']}\t"
-        f"{raw_timestamp}\t"
-        f"{log_date}\t"
-        f"{log_hour}\t"
-        f"{http_method}\t"
-        f"{resource_path}\t"
-        f"{protocol_version}\t"
-        f"{data['status']}\t"
-        f"{bytes_transferred}\n"
-    )
-    return structured_record
+    return len(request_parts) == 3
 
 def process_and_batch_logs(input_files, output_dir, batch_size=100000):
     """
@@ -86,7 +54,7 @@ def process_and_batch_logs(input_files, output_dir, batch_size=100000):
         with _open_log_file(file_path) as f:
             for line in f:
                 total_processed += 1
-                if parse_log_line(line.strip()) is None:
+                if not _is_valid_log_line(line.strip()):
                     malformed_count += 1
                     current_batch_malformed += 1
 

@@ -43,10 +43,40 @@ def _create_schema(cursor):
     with open(schema_path, "r", encoding="utf-8") as handle:
         sql_text = handle.read()
 
-    for statement in [stmt.strip() for stmt in sql_text.split(";") if stmt.strip()]:
-        cursor.execute(statement + ";")
+    for statement in _iter_sql_statements(sql_text):
+        cursor.execute(statement)
 
     print(f"[INFO] Created PostgreSQL schema from {schema_path}")
+
+
+def _load_reset_script(cursor):
+    reset_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "database", "reset_and_create.sql")
+    )
+    if not os.path.exists(reset_path):
+        raise FileNotFoundError(f"Could not find reset script at {reset_path}")
+
+    with open(reset_path, "r", encoding="utf-8") as handle:
+        sql_text = handle.read()
+
+    for statement in _iter_sql_statements(sql_text):
+        cursor.execute(statement)
+
+    print(f"[INFO] Reset PostgreSQL schema from {reset_path}")
+
+
+def _iter_sql_statements(sql_text):
+    for statement in sql_text.split(";"):
+        cleaned_lines = []
+        for line in statement.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("--"):
+                continue
+            cleaned_lines.append(line)
+
+        cleaned_statement = "\n".join(cleaned_lines).strip()
+        if cleaned_statement:
+            yield cleaned_statement
 
 
 def _ensure_schema(cursor):
@@ -55,6 +85,27 @@ def _ensure_schema(cursor):
         return False
     _create_schema(cursor)
     return True
+
+
+def reset_database():
+    """Drop and recreate the reporting schema on demand."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        conn.autocommit = False
+        cursor = conn.cursor()
+        _load_reset_script(cursor)
+        conn.commit()
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        raise
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
+            conn.close()
 
 
 def ingest_query_results(batch_output_dir, metadata):
@@ -134,23 +185,27 @@ def _insert_run_metadata(cursor, metadata):
     query = """
         INSERT INTO run_metadata (
             pipeline_name,
+            query_name,
             run_identifier,
             batch_id,
             batch_size,
+            records_processed,
             average_batch_size,
             runtime_seconds,
             malformed_record_count
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING run_id;
     """
     cursor.execute(
         query,
         (
             metadata.get("pipeline_name", "pipeline_unkown"),
+            metadata.get("query_name", "all"),
             metadata.get("run_identifier", "run_unknown"),
             metadata.get("batch_id"),
             metadata.get("batch_size"),
+            metadata.get("records_processed", metadata.get("batch_size")),
             metadata.get("average_batch_size"),
             metadata.get("runtime_seconds"),
             metadata.get("malformed_record_count", 0),
