@@ -54,9 +54,9 @@ Multipipeline-ETL/
         ├── pig/
         │   └── queries.pig
         ├── hive/
-        │   └── test.py
+        │   └── queries.hql
         ├── mapreduce/
-        │   └── test.py
+        │   └── queries.py
         └── mongodb/
             └── test.py
 ```
@@ -67,6 +67,7 @@ The key files for the current phase are:
 * `src/controllers/utils.py` - parses log lines and creates batches from the raw input files.
 * `src/controllers/db_client.py` - loads Pig results into PostgreSQL.
 * `src/pipelines/pig/queries.pig` - performs the Pig ETL and aggregation work.
+* `src/pipelines/hive/queries.hql` - performs the Hive ETL and aggregation work.
 * `database/schema.sql` and `database/reset_and_create.sql` - define and recreate the reporting schema.
 
 ---
@@ -86,12 +87,14 @@ All pipelines must successfully compute the following three mandatory queries us
 * Java 11 (OpenJDK)
 * Python 3.8+
 * Apache Pig (Local Mode)
+* Apache Hadoop (Local Mode support for Hive)
+* Apache Hive (Local Mode)
 * PostgreSQL (Running inside WSL/Ubuntu or systemd Linux recommended)
 * `psycopg2` (Python library for PostgreSQL)
 
 ### Environment setup
 
-These commands install and configure the runtime used by this project. They assume a Debian/Ubuntu-style system and that you want a system-wide Apache Pig install under `/opt` (recommended).
+These commands install and configure the runtime used by this project. They assume a Debian/Ubuntu-style system and that you want system-wide Apache Pig, Hadoop, and Hive installs under `/opt` (recommended).
 
 1) Install system packages (JDK, Python, Postgres tooling):
 
@@ -159,7 +162,108 @@ export PIG_CLASSPATH=/usr/share/java/commons-text.jar:/usr/share/java/commons-co
 
 Note: Do NOT install Pig inside `/usr/lib` (that's for JVM distributions). Keep Pig under `/opt` or `/usr/local` so it is easy to manage and not overwritten by package managers.
 
-5) PostgreSQL setup (create DB and load schema)
+5) Install Apache Hadoop for Hive local execution
+
+The Hive pipeline in `src/controllers/main.py` runs:
+
+```bash
+hive -f src/pipelines/hive/queries.hql -hiveconf INPUT=<batch_file> -hiveconf OUTPUT_DIR=<output_path>
+```
+
+The query file sets `mapreduce.framework.name=local`, so you do **not** need to start a Hadoop/YARN cluster. You still need a Hadoop installation because the Hive CLI uses Hadoop libraries and commands internally.
+
+```bash
+cd /tmp
+wget https://archive.apache.org/dist/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
+sudo tar -xzf hadoop-3.3.6.tar.gz -C /opt
+
+sudo tee /etc/profile.d/hadoop.sh > /dev/null <<'EOF'
+export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+export HADOOP_HOME=/opt/hadoop-3.3.6
+export HADOOP_CONF_DIR="$HADOOP_HOME/etc/hadoop"
+export PATH="$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$PATH"
+EOF
+
+sudo chmod 644 /etc/profile.d/hadoop.sh
+source /etc/profile.d/hadoop.sh
+
+hadoop version
+```
+
+6) Install Apache Hive and initialize the local metastore
+
+This project uses Hive in single-machine local mode. The setup below uses Hive's embedded Derby metastore, which is enough for the local batch pipeline. Run the `schematool` command from the repository root so the `metastore_db` directory is created there.
+
+```bash
+cd /tmp
+wget https://archive.apache.org/dist/hive/hive-3.1.3/apache-hive-3.1.3-bin.tar.gz
+sudo tar -xzf apache-hive-3.1.3-bin.tar.gz -C /opt
+
+sudo tee /etc/profile.d/hive.sh > /dev/null <<'EOF'
+export HIVE_HOME=/opt/apache-hive-3.1.3-bin
+export PATH="$HIVE_HOME/bin:$PATH"
+EOF
+
+sudo chmod 644 /etc/profile.d/hive.sh
+source /etc/profile.d/hive.sh
+
+# Run the rest of this Hive setup from the repository root.
+cd /mnt/c/Codes/Multipipeline-ETL
+mkdir -p data/hive/warehouse
+cat > /tmp/hive-site.xml <<'EOF'
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+  <property>
+    <name>javax.jdo.option.ConnectionURL</name>
+    <value>jdbc:derby:;databaseName=metastore_db;create=true</value>
+  </property>
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>file://${user.dir}/data/hive/warehouse</value>
+  </property>
+  <property>
+    <name>hive.exec.scratchdir</name>
+    <value>file://${user.dir}/data/hive/scratch</value>
+  </property>
+  <property>
+    <name>hive.exec.local.scratchdir</name>
+    <value>${user.dir}/data/hive/local_scratch</value>
+  </property>
+</configuration>
+EOF
+sudo cp /tmp/hive-site.xml "$HIVE_HOME/conf/hive-site.xml"
+
+schematool -dbType derby -initSchema
+
+hive --version
+```
+
+Important Hive notes:
+
+* The embedded Derby metastore supports one Hive process at a time. That is fine for this project's sequential batch execution.
+* The Hive script uses `LOAD DATA LOCAL INPATH`, so input files can stay on your normal local filesystem.
+* Hive writes output files named `000000_0`; `main.py` renames them to `part-00000` so `db_client.py` can ingest them.
+* If `schematool -initSchema` says the schema already exists, that is okay. Do not delete `metastore_db` unless you intentionally want to reset the local Hive metastore.
+
+7) Quick Hive pipeline check
+
+After exporting the variables in the Environment Variables section, run a small batch to confirm Hive can execute and PostgreSQL can ingest the results:
+
+```bash
+source venv/bin/activate
+python src/controllers/main.py --pipeline hive --batch-size 1000 --input data/raw/access_log_Jul95
+```
+
+Expected output directories:
+
+```text
+data/output/hive_results/batch_1/query1/part-00000
+data/output/hive_results/batch_1/query2/part-00000
+data/output/hive_results/batch_1/query3/part-00000
+```
+
+8) PostgreSQL setup (create DB and load schema)
 
 The project schema is in `database/reset_and_create.sql`. Use it to create a fresh database state when needed:
 
@@ -181,7 +285,7 @@ sudo -u postgres psql -d nosql_project -f database/reset_and_create.sql
 sudo -u postgres psql -d nosql_project -c "\dt"
 ```
 
-6) Launch the Orchestrator CLI (Recommended)
+9) Launch the Orchestrator CLI (Recommended)
 
 The reporting dashboard is the central entry point for the project. It handles environment checks, pipeline execution, and final data visualization.
 
@@ -191,12 +295,13 @@ source venv/bin/activate
 python src/controllers/reporting.py
 ```
 
-### 7) Manual execution (Advanced)
+### 10) Manual execution (Advanced)
 
 If you prefer to run the orchestrator directly without the interactive CLI:
 
 ```bash
 python src/controllers/main.py --pipeline pig --batch-size 100000 --input data/raw/access_log_Jul95
+python src/controllers/main.py --pipeline hive --batch-size 100000 --input data/raw/access_log_Jul95
 ```
 
 ---
@@ -216,7 +321,10 @@ export PGPORT=5432
 # Big Data Tools
 export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 export PIG_HOME=/opt/pig-0.18.0
-export PATH="$JAVA_HOME/bin:$PIG_HOME/bin:$PATH"
+export HADOOP_HOME=/opt/hadoop-3.3.6
+export HADOOP_CONF_DIR="$HADOOP_HOME/etc/hadoop"
+export HIVE_HOME=/opt/apache-hive-3.1.3-bin
+export PATH="$JAVA_HOME/bin:$PIG_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$HIVE_HOME/bin:$PATH"
 export PIG_CLASSPATH=/usr/share/java/commons-text.jar:/usr/share/java/commons-compress.jar:/usr/share/java/commons-lang3.jar:$PIG_CLASSPATH
 ```
 
