@@ -15,6 +15,10 @@ target/
 *.jar
 *.class
 
+# Local Hive/Derby metastore files
+metastore_db/
+derby.log
+
 # IDE configurations
 .vscode/
 .idea/

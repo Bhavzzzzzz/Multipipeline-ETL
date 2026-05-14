@@ -28,6 +28,7 @@ The framework is orchestrated by a Python controller that physically batches the
 ```text
 Multipipeline-ETL/
 ├── README.md
+├── setup.sh                         # local/gitignored environment file
 ├── temp.md
 ├── .gitignore
 ├── data/
@@ -48,6 +49,7 @@ Multipipeline-ETL/
 └── src/
     ├── controllers/
     │   ├── main.py
+    │   ├── env_utils.py
     │   ├── utils.py
     │   └── db_client.py
     └── pipelines/
@@ -64,10 +66,12 @@ Multipipeline-ETL/
 The key files for the current phase are:
 
 * `src/controllers/main.py` - orchestrates batching, Pig execution, and DB loading.
+* `src/controllers/env_utils.py` - centralizes runtime environment checks shared by the CLI and orchestrator.
 * `src/controllers/utils.py` - parses log lines and creates batches from the raw input files.
 * `src/controllers/db_client.py` - loads Pig results into PostgreSQL.
 * `src/pipelines/pig/queries.pig` - performs the Pig ETL and aggregation work.
 * `src/pipelines/hive/queries.hql` - performs the Hive ETL and aggregation work.
+* `setup.sh` - local/gitignored file that exports the environment variables used by `main.py` and `reporting.py`.
 * `database/schema.sql` and `database/reset_and_create.sql` - define and recreate the reporting schema.
 
 ---
@@ -84,11 +88,11 @@ All pipelines must successfully compute the following three mandatory queries us
 ## 🚀 Setup & Execution
 
 ### Prerequisites
-* Java 11 (OpenJDK)
+* Java 17 (OpenJDK, required for the Hive 4 workflow)
 * Python 3.8+
 * Apache Pig (Local Mode)
 * Apache Hadoop (Local Mode support for Hive)
-* Apache Hive (Local Mode)
+* Apache Hive 4.x (Local Mode)
 * MongoDB (Running locally or accessible via URI)
 * PostgreSQL (Running inside WSL/Ubuntu or systemd Linux recommended)
 * `psycopg2` (Python library for PostgreSQL)
@@ -98,11 +102,13 @@ All pipelines must successfully compute the following three mandatory queries us
 
 These commands install and configure the runtime used by this project. They assume a Debian/Ubuntu-style system and that you want system-wide Apache Pig, Hadoop, and Hive installs under `/opt` (recommended).
 
+The examples below use the Debian/Ubuntu Java 17 path `/usr/lib/jvm/java-17-openjdk-amd64`. On Arch-based systems this is commonly `/usr/lib/jvm/java-17-openjdk`; use the path that exists on your machine.
+
 1) Install system packages (JDK, Python, Postgres tooling, MongoDB):
 
 ```bash
 sudo apt update
-sudo apt install -y openjdk-11-jdk python3 python3-pip python3-venv postgresql postgresql-contrib wget curl tar mongodb
+sudo apt install -y openjdk-17-jdk python3 python3-pip python3-venv postgresql postgresql-contrib wget curl tar mongodb
 sudo service mongodb start
 ```
 
@@ -133,7 +139,7 @@ sudo tar -xzf pig-0.18.0.tar.gz -C /opt
 
 # Create a system profile so Pig is on PATH and Java is pointed to your JDK
 sudo tee /etc/profile.d/pig.sh > /dev/null <<'EOF'
-export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 export PIG_HOME=/opt/pig-0.18.0
 export PATH="$PIG_HOME/bin:$PATH"
 EOF
@@ -177,11 +183,11 @@ The query file sets `mapreduce.framework.name=local`, so you do **not** need to 
 
 ```bash
 cd /tmp
-wget https://archive.apache.org/dist/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
+wget -c https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
 sudo tar -xzf hadoop-3.3.6.tar.gz -C /opt
 
 sudo tee /etc/profile.d/hadoop.sh > /dev/null <<'EOF'
-export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 export HADOOP_HOME=/opt/hadoop-3.3.6
 export HADOOP_CONF_DIR="$HADOOP_HOME/etc/hadoop"
 export PATH="$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$PATH"
@@ -193,17 +199,20 @@ source /etc/profile.d/hadoop.sh
 hadoop version
 ```
 
-6) Install Apache Hive and initialize the local metastore
+6) Install Apache Hive 4 and initialize the local metastore
 
-This project uses Hive in single-machine local mode. The setup below uses Hive's embedded Derby metastore, which is enough for the local batch pipeline. Run the `schematool` command from the repository root so the `metastore_db` directory is created there.
+This project uses Hive 4 in single-machine local mode. The setup below uses Hive's embedded Derby metastore, which is enough for the local batch pipeline. Run the `schematool` command from the repository root so the `metastore_db` directory is created there.
+
+If you previously initialized this repository with Hive 3.x, move the old local metastore out of the way before initializing Hive 4. Hive metastore schemas are versioned, and reusing the Hive 3 Derby directory can cause startup errors.
 
 ```bash
 cd /tmp
-wget https://archive.apache.org/dist/hive/hive-3.1.3/apache-hive-3.1.3-bin.tar.gz
-sudo tar -xzf apache-hive-3.1.3-bin.tar.gz -C /opt
+wget -c https://archive.apache.org/dist/hive/hive-4.1.0/apache-hive-4.1.0-bin.tar.gz
+sudo tar -xzf apache-hive-4.1.0-bin.tar.gz -C /opt
 
 sudo tee /etc/profile.d/hive.sh > /dev/null <<'EOF'
-export HIVE_HOME=/opt/apache-hive-3.1.3-bin
+export HIVE_HOME=/opt/apache-hive-4.1.0-bin
+export HIVE_BIN="$HIVE_HOME/bin/hive"
 export PATH="$HIVE_HOME/bin:$PATH"
 EOF
 
@@ -213,6 +222,10 @@ source /etc/profile.d/hive.sh
 # Run the rest of this Hive setup from the repository root.
 cd /mnt/c/Codes/Multipipeline-ETL
 mkdir -p data/hive/warehouse
+
+# Optional when migrating from the previous Hive 3 local setup:
+# mv metastore_db "metastore_db.hive3.$(date +%Y%m%d%H%M%S)"
+
 cat > /tmp/hive-site.xml <<'EOF'
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
@@ -245,8 +258,10 @@ hive --version
 Important Hive notes:
 
 * The embedded Derby metastore supports one Hive process at a time. That is fine for this project's sequential batch execution.
+* `main.py` now validates that the configured Hive binary is Hive 4.x before running the Hive pipeline.
+* If your Hive binary is not named `hive` or is not first on `PATH`, set `HIVE_BIN=/path/to/apache-hive-4.1.0-bin/bin/hive`.
 * The Hive script uses `LOAD DATA LOCAL INPATH`, so input files can stay on your normal local filesystem.
-* Hive writes output files named `000000_0`; `main.py` renames them to `part-00000` so `db_client.py` can ingest them.
+* Hive writes engine-specific output filenames; `main.py` normalizes each Hive query output to `part-00000` so `db_client.py` can ingest it.
 * If `schematool -initSchema` says the schema already exists, that is okay. Do not delete `metastore_db` unless you intentionally want to reset the local Hive metastore.
 
 7) Quick Hive pipeline check
@@ -294,7 +309,7 @@ The reporting dashboard is the central entry point for the project. It handles e
 
 ```bash
 source venv/bin/activate
-# Ensure environment variables are exported (see below)
+source setup.sh
 python src/controllers/reporting.py
 ```
 
@@ -306,16 +321,24 @@ If you prefer to run the orchestrator directly without the interactive CLI:
 # For Pig
 python src/controllers/main.py --pipeline pig --batch-size 100000 --input data/raw/access_log_Jul95
 
+# For Hive
+python src/controllers/main.py --pipeline hive --batch-size 100000 --input data/raw/access_log_Jul95
+
 # For MongoDB
 python src/controllers/main.py --pipeline mongodb --batch-size 100000 --input data/raw/access_log_Jul95
-python src/controllers/main.py --pipeline hive --batch-size 100000 --input data/raw/access_log_Jul95
 ```
 
 ---
 
 ## 🚀 Environment Variables
 
-Before running `reporting.py`, ensure the following variables are set in your session. You can add these to your `.bashrc` or a `.env` file:
+Before running `reporting.py` or `main.py`, ensure the following variables are set in your session. The easiest option is to edit the password/path values in your local `setup.sh`, then source it:
+
+```bash
+source setup.sh
+```
+
+The file exports the same variables shown below. You can also add these to your `.bashrc` or a `.env` file:
 
 ```bash
 # Database (PostgreSQL)
@@ -330,35 +353,12 @@ export MONGO_URI='mongodb://localhost:27017/'
 export MONGO_DB='nosql_project'
 
 # Big Data Tools
-export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 export PIG_HOME=/opt/pig-0.18.0
 export HADOOP_HOME=/opt/hadoop-3.3.6
 export HADOOP_CONF_DIR="$HADOOP_HOME/etc/hadoop"
-export HIVE_HOME=/opt/apache-hive-3.1.3-bin
+export HIVE_HOME=/opt/apache-hive-4.1.0-bin
+export HIVE_BIN="$HIVE_HOME/bin/hive"
 export PATH="$JAVA_HOME/bin:$PIG_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$HIVE_HOME/bin:$PATH"
 export PIG_CLASSPATH=/usr/share/java/commons-text.jar:/usr/share/java/commons-compress.jar:/usr/share/java/commons-lang3.jar:$PIG_CLASSPATH
 ```
-
----
-
-## 👥 Team Roles & Handoffs
-
-To keep development clean and prevent merge conflicts, responsibilities are divided as follows:
-
-* **Member 1 (Data & Controller):** * Design the master regex for log parsing.
-    * Build the core `main.py` Python orchestrator to handle physical file batching and sequential execution triggering. *(Completed)*
-* **Member 2 (Pig Pipeline):** * Write the Apache Pig scripts (`queries.pig`) to handle the ETL aggregations for all three queries. *(Completed)*
-* **Member 3 (Database & Ingestion):** * Design the PostgreSQL schema for the three queries (`database/schema.sql`) and reset script (`database/reset_and_create.sql`). *(Completed)*
-    * Implement `src/controllers/db_client.py` using `psycopg2`. *(Completed)*
-* **Member 4 (Reporting UI & Orchestration):** * **[COMPLETED]** Build the CLI dashboard in `src/controllers/reporting.py` to orchestrate pipeline execution and render the final formatted console output.
-    * Extended `db_client.py` with reporting fetch functions.
-    * Finalized system integration and README documentation.
-
-### Member 4 CLI Flow
-
-The reporting CLI (`src/controllers/reporting.py`) follows this flow:
-
-1. **Environment Check:** Alerts the user if critical variables (`PGPASSWORD`, `PIG_HOME`, etc.) are missing.
-2. **Main Menu:** Allows selection of Pig (Ready) or Phase 2 placeholders (MapReduce, Hive, MongoDB).
-3. **Execution:** Prompts for batch size and input file, then triggers the orchestrator.
-4. **Reporting:** Automatically fetches results from PostgreSQL and renders formatted tables for Query 1, 2, and 3.
