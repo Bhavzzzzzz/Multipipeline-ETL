@@ -18,3 +18,8 @@ target/
 # IDE configurations
 .vscode/
 .idea/
+
+# my own files
+setup.sh
+.agents/
+.codex/
