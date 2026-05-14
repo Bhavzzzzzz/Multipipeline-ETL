@@ -47,7 +47,15 @@ def missing_env_for_pipeline(pipeline_name):
 def missing_commands_for_pipeline(pipeline_name):
     commands = PIPELINE_COMMANDS.get(pipeline_name, [])
     if pipeline_name == "hive":
-        commands = commands + [os.getenv("HIVE_BIN", "hive")]
+        hive_home = os.getenv("HIVE_HOME")
+        beeline_command = os.getenv("HIVE_BEELINE_BIN")
+        if not beeline_command and hive_home:
+            beeline_command = os.path.join(hive_home, "bin", "beeline")
+
+        commands = commands + [
+            os.getenv("HIVE_BIN", "hive"),
+            beeline_command or "beeline",
+        ]
 
     return [
         command
@@ -58,10 +66,15 @@ def missing_commands_for_pipeline(pipeline_name):
 
 def missing_commands_for_all_pipelines():
     hive_command = os.getenv("HIVE_BIN", "hive")
+    hive_home = os.getenv("HIVE_HOME")
+    beeline_command = os.getenv("HIVE_BEELINE_BIN")
+    if not beeline_command and hive_home:
+        beeline_command = os.path.join(hive_home, "bin", "beeline")
+
     return sorted(
         {
             command
-            for commands in list(PIPELINE_COMMANDS.values()) + [[hive_command]]
+            for commands in list(PIPELINE_COMMANDS.values()) + [[hive_command, beeline_command or "beeline"]]
             for command in commands
             if shutil.which(command) is None
         }

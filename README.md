@@ -173,10 +173,10 @@ Note: Do NOT install Pig inside `/usr/lib` (that's for JVM distributions). Keep 
 
 5) Install Apache Hadoop for Hive local execution
 
-The Hive pipeline in `src/controllers/main.py` runs:
+The Hive pipeline in `src/controllers/main.py` validates the Hive 4 install, renders the query template with the current batch paths, then runs the rendered file through Beeline embedded mode:
 
 ```bash
-hive -f src/pipelines/hive/queries.hql -hiveconf INPUT=<batch_file> -hiveconf OUTPUT_DIR=<output_path>
+beeline -u jdbc:hive2:// -f <rendered_queries.hql>
 ```
 
 The query file sets `mapreduce.framework.name=local`, so you do **not** need to start a Hadoop/YARN cluster. You still need a Hadoop installation because the Hive CLI uses Hadoop libraries and commands internally.
@@ -213,6 +213,8 @@ sudo tar -xzf apache-hive-4.1.0-bin.tar.gz -C /opt
 sudo tee /etc/profile.d/hive.sh > /dev/null <<'EOF'
 export HIVE_HOME=/opt/apache-hive-4.1.0-bin
 export HIVE_BIN="$HIVE_HOME/bin/hive"
+export HIVE_BEELINE_BIN="$HIVE_HOME/bin/beeline"
+export HIVE_JDBC_URL='jdbc:hive2://'
 export PATH="$HIVE_HOME/bin:$PATH"
 EOF
 
@@ -260,6 +262,8 @@ Important Hive notes:
 * The embedded Derby metastore supports one Hive process at a time. That is fine for this project's sequential batch execution.
 * `main.py` now validates that the configured Hive binary is Hive 4.x before running the Hive pipeline.
 * If your Hive binary is not named `hive` or is not first on `PATH`, set `HIVE_BIN=/path/to/apache-hive-4.1.0-bin/bin/hive`.
+* Hive 4 routes SQL execution through Beeline. `main.py` calls `HIVE_BEELINE_BIN` directly with `HIVE_JDBC_URL=jdbc:hive2://` so it uses embedded local mode instead of waiting for an external HiveServer2 connection.
+* Beeline embedded mode does not reliably expand Hive variables in this setup, so `main.py` renders `__INPUT__` and `__OUTPUT_DIR__` placeholders into a temporary `.hql` file before execution.
 * The Hive script uses `LOAD DATA LOCAL INPATH`, so input files can stay on your normal local filesystem.
 * Hive writes engine-specific output filenames; `main.py` normalizes each Hive query output to `part-00000` so `db_client.py` can ingest it.
 * If `schematool -initSchema` says the schema already exists, that is okay. Do not delete `metastore_db` unless you intentionally want to reset the local Hive metastore.
@@ -359,6 +363,8 @@ export HADOOP_HOME=/opt/hadoop-3.3.6
 export HADOOP_CONF_DIR="$HADOOP_HOME/etc/hadoop"
 export HIVE_HOME=/opt/apache-hive-4.1.0-bin
 export HIVE_BIN="$HIVE_HOME/bin/hive"
+export HIVE_BEELINE_BIN="$HIVE_HOME/bin/beeline"
+export HIVE_JDBC_URL='jdbc:hive2://'
 export PATH="$JAVA_HOME/bin:$PIG_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$HIVE_HOME/bin:$PATH"
 export PIG_CLASSPATH=/usr/share/java/commons-text.jar:/usr/share/java/commons-compress.jar:/usr/share/java/commons-lang3.jar:$PIG_CLASSPATH
 ```

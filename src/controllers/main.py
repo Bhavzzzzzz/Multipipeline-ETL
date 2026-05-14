@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import argparse
 import re
@@ -66,6 +67,49 @@ def _hive_command():
     return os.getenv("HIVE_BIN", "hive")
 
 
+def _beeline_command():
+    if os.getenv("HIVE_BEELINE_BIN"):
+        return os.getenv("HIVE_BEELINE_BIN")
+
+    hive_home = os.getenv("HIVE_HOME")
+    if hive_home:
+        return os.path.join(hive_home, "bin", "beeline")
+
+    return "beeline"
+
+
+def _hive_environment():
+    env = os.environ.copy()
+    env.pop("DEBUG", None)
+    return env
+
+
+def _hive_sql_string(value: str):
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _render_hive_script(batch_path: str, output_dir: str):
+    template_path = os.path.join("src", "pipelines", "hive", "queries.hql")
+    with open(template_path, "r", encoding="utf-8") as handle:
+        script = handle.read()
+
+    script = script.replace("__INPUT__", _hive_sql_string(os.path.abspath(batch_path)))
+    script = script.replace("__OUTPUT_DIR__", _hive_sql_string(os.path.abspath(output_dir)))
+
+    rendered = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix="hive4_",
+        suffix=".hql",
+        delete=False,
+    )
+    try:
+        rendered.write(script)
+        return rendered.name
+    finally:
+        rendered.close()
+
+
 def _validate_hive4_runtime(hive_bin: str):
     result = subprocess.run(
         [hive_bin, "--version"],
@@ -124,21 +168,33 @@ def run_hive_pipeline(batch_path: str, output_dir: str):
         shutil.rmtree(output_dir)
 
     hive_bin = _hive_command()
+    beeline_bin = _beeline_command()
     _validate_hive4_runtime(hive_bin)
+    rendered_script_path = _render_hive_script(batch_path, output_dir)
 
     cmd = [
-        hive_bin, "-f", "src/pipelines/hive/queries.hql",
-        "-hiveconf", f"INPUT={batch_path}",
-        "-hiveconf", f"OUTPUT_DIR={output_dir}"
+        beeline_bin,
+        "-u", os.getenv("HIVE_JDBC_URL", "jdbc:hive2://"),
+        "-f", rendered_script_path,
     ]
     
     print(f"[*] Executing Hive pipeline for {os.path.basename(batch_path)}...")
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    
-    if result.returncode != 0:
-        print("[-] Hive Job Failed!")
-        print(result.stderr)
-        raise RuntimeError("Hive execution error")
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=_hive_environment(),
+        )
+        
+        if result.returncode != 0:
+            print("[-] Hive Job Failed!")
+            print(result.stderr)
+            raise RuntimeError("Hive execution error")
+    finally:
+        if os.path.exists(rendered_script_path):
+            os.unlink(rendered_script_path)
 
     _normalize_hive_output_files(output_dir)
 
