@@ -1,16 +1,21 @@
 -- src/pipelines/hive/queries.hql
--- Execution: hive -f queries.hql -hiveconf INPUT=<batch_file> -hiveconf OUTPUT_DIR=<output_path>
+-- Execution: main.py renders __INPUT__ and __OUTPUT_DIR__, then runs:
+-- beeline -u jdbc:hive2:// -f <rendered_queries.hql>
+-- Runtime target: Apache Hive 4.x
 
--- Force local execution so it doesn't wait for a massive YARN cluster
+-- Force local MapReduce execution so the project does not need YARN/Tez services.
 set mapreduce.framework.name=local;
+set hive.execution.engine=mr;
+set hive.strict.managed.tables=false;
 
 -- 1. Create a temporary table and load the raw text file
 DROP TABLE IF EXISTS raw_logs;
 CREATE TABLE raw_logs (line STRING);
-LOAD DATA LOCAL INPATH '${hiveconf:INPUT}' INTO TABLE raw_logs;
+LOAD DATA LOCAL INPATH '__INPUT__' INTO TABLE raw_logs;
 
 -- 2. Create a view that parses the raw strings using RegEx
 -- We extract the exact same fields as the Pig script
+DROP VIEW IF EXISTS parsed_logs;
 CREATE VIEW IF NOT EXISTS parsed_logs AS
 SELECT
     regexp_extract(line, '^(\\S+)', 1) as host,
@@ -24,6 +29,7 @@ SELECT
 FROM raw_logs;
 
 -- 3. Clean the data (Handle the '-' in bytes, filter out nulls)
+DROP VIEW IF EXISTS clean_logs;
 CREATE VIEW IF NOT EXISTS clean_logs AS
 SELECT
     host, log_date, log_hour, http_method, resource_path, protocol_version, status_code,
@@ -34,7 +40,7 @@ WHERE host IS NOT NULL AND host != '';
 -- ==============================================================================
 -- Query 1: Daily Traffic Summary
 -- ==============================================================================
-INSERT OVERWRITE LOCAL DIRECTORY '${hiveconf:OUTPUT_DIR}/query1'
+INSERT OVERWRITE LOCAL DIRECTORY '__OUTPUT_DIR__/query1'
 ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
 SELECT log_date, status_code, count(*) as request_count, sum(bytes_transferred) as total_bytes
 FROM clean_logs
@@ -43,7 +49,7 @@ GROUP BY log_date, status_code;
 -- ==============================================================================
 -- Query 2: Top Requested Resources
 -- ==============================================================================
-INSERT OVERWRITE LOCAL DIRECTORY '${hiveconf:OUTPUT_DIR}/query2'
+INSERT OVERWRITE LOCAL DIRECTORY '__OUTPUT_DIR__/query2'
 ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
 SELECT resource_path, count(*) as request_count, sum(bytes_transferred) as total_bytes, count(DISTINCT host) as distinct_host_count
 FROM clean_logs
@@ -54,7 +60,7 @@ LIMIT 20;
 -- ==============================================================================
 -- Query 3: Hourly Error Analysis
 -- ==============================================================================
-INSERT OVERWRITE LOCAL DIRECTORY '${hiveconf:OUTPUT_DIR}/query3'
+INSERT OVERWRITE LOCAL DIRECTORY '__OUTPUT_DIR__/query3'
 ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
 SELECT
     log_date,

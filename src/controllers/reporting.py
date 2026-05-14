@@ -1,29 +1,16 @@
 # src/controllers/reporting.py
 import os
 import sys
-import shutil
 import subprocess
 import time
-import db_client
 
-ENV_GROUPS = {
-    "PostgreSQL": ["PGDATABASE", "PGUSER", "PGPASSWORD", "PGHOST", "PGPORT"],
-    "Java": ["JAVA_HOME"],
-    "Pig": ["PIG_HOME", "PIG_CLASSPATH"],
-    "Hadoop": ["HADOOP_HOME", "HADOOP_CONF_DIR"],
-    "Hive": ["HIVE_HOME"],
-}
-
-PIPELINE_ENV_GROUPS = {
-    "pig": ["PostgreSQL", "Java", "Pig"],
-    "mapreduce": ["PostgreSQL"],
-    "hive": ["PostgreSQL", "Java", "Hadoop", "Hive"],
-}
-
-PIPELINE_COMMANDS = {
-    "pig": ["pig"],
-    "hive": ["hadoop", "hive"],
-}
+try:
+    # Use package-relative imports when executed as a package
+    from . import db_client, env_utils
+except Exception:
+    # Fallback for direct script execution / legacy PATH setups
+    import db_client
+    import env_utils
 
 def clear_screen():
     subprocess.run('cls' if os.name == 'nt' else 'clear')
@@ -33,59 +20,22 @@ def print_header(title):
     print(f" {title.center(78)} ")
     print("="*80)
 
-def _missing_env_for_groups(group_names):
-    missing_by_group = {}
-    for group_name in group_names:
-        missing = [var for var in ENV_GROUPS[group_name] if not os.getenv(var)]
-        if missing:
-            missing_by_group[group_name] = missing
-    return missing_by_group
-
-def _missing_commands_for_pipeline(pipeline_name):
-    return [
-        command
-        for command in PIPELINE_COMMANDS.get(pipeline_name, [])
-        if shutil.which(command) is None
-    ]
-
 def _print_env_warning(missing_by_group, missing_commands=None):
     missing_commands = missing_commands or []
-    if missing_by_group or missing_commands:
+    if env_utils.has_environment_issues(missing_by_group, missing_commands):
         print_header("ENVIRONMENT CHECK")
-        if missing_by_group:
-            print("[-] WARNING: The following environment variables are missing:")
-            for group_name, variables in missing_by_group.items():
-                print(f"    {group_name}: {', '.join(variables)}")
-
-        if missing_commands:
-            print("\n[-] WARNING: The following commands are not available on PATH:")
-            for command in missing_commands:
-                print(f"    - {command}")
-
-        print("\n[!] Please ensure PostgreSQL, Pig, Hadoop, and Hive are configured as needed.")
-        print("[!] Refer to README.md for setup instructions.")
+        env_utils.print_environment_issues(missing_by_group, missing_commands, warning=True)
         return True
     return False
 
 def check_env():
-    all_group_names = list(ENV_GROUPS.keys())
-    missing_by_group = _missing_env_for_groups(all_group_names)
-    missing_commands = sorted(
-        {
-            command
-            for commands in PIPELINE_COMMANDS.values()
-            for command in commands
-            if shutil.which(command) is None
-        }
-    )
+    missing_by_group, missing_commands = env_utils.all_environment_issues()
 
     if _print_env_warning(missing_by_group, missing_commands):
         input("\nPress Enter to continue anyway (or Ctrl+C to exit)...")
 
 def check_pipeline_env(pipeline_name):
-    group_names = PIPELINE_ENV_GROUPS.get(pipeline_name, ["PostgreSQL"])
-    missing_by_group = _missing_env_for_groups(group_names)
-    missing_commands = _missing_commands_for_pipeline(pipeline_name)
+    missing_by_group, missing_commands = env_utils.pipeline_environment_issues(pipeline_name)
 
     if _print_env_warning(missing_by_group, missing_commands):
         input(f"\nPress Enter to try {pipeline_name} anyway (or Ctrl+C to cancel)...")
@@ -105,12 +55,6 @@ def show_menu():
 def run_pipeline(pipeline_name):
     print_header(f"LAUNCHING {pipeline_name.upper()} PIPELINE")
     
-    # Validation for placeholders
-    if pipeline_name in ["mapreduce", "hive", "mongodb"]:
-        print(f"[-] {pipeline_name.capitalize()} pipeline is currently a placeholder for Phase 2.")
-        time.sleep(2)
-        return False
-
     check_pipeline_env(pipeline_name)
 
     batch_size = input("Enter Batch Size [default 100000]: ").strip()
@@ -213,15 +157,13 @@ def main():
         choice = show_menu()
         
         if choice == '1':
-            if run_pipeline("pig"):
-                generate_report()
+            run_pipeline("pig")
         elif choice == '2':
             run_pipeline("mapreduce")
         elif choice == '3':
             run_pipeline("hive")
         elif choice == '4':
-            if run_pipeline("mongodb"):
-                generate_report()
+            run_pipeline("mongodb")
         elif choice == '5':
             generate_report()
         elif choice == 'q':

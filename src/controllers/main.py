@@ -3,17 +3,21 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import argparse
+import re
 from tqdm import tqdm
 
 try:
     # Use package-relative imports when executed as a package
     from . import db_client
+    from .env_utils import PIPELINE_DISPLAY_NAMES, validate_runtime_environment
     from .utils import process_and_batch_logs
 except Exception:
     # Fallback for direct script execution / legacy PATH setups
     import db_client
+    from env_utils import PIPELINE_DISPLAY_NAMES, validate_runtime_environment
     from utils import process_and_batch_logs
 
 def run_pig_pipeline(batch_path: str, output_dir: str):
@@ -58,33 +62,141 @@ def run_mapreduce_pipeline(batch_path: str, output_dir: str):
         print(result.stderr)
         raise RuntimeError("MapReduce execution error")
 
+def _hive_command():
+    """Return the configured Hive 4 CLI command."""
+    return os.getenv("HIVE_BIN", "hive")
+
+
+def _beeline_command():
+    if os.getenv("HIVE_BEELINE_BIN"):
+        return os.getenv("HIVE_BEELINE_BIN")
+
+    hive_home = os.getenv("HIVE_HOME")
+    if hive_home:
+        return os.path.join(hive_home, "bin", "beeline")
+
+    return "beeline"
+
+
+def _hive_environment():
+    env = os.environ.copy()
+    env.pop("DEBUG", None)
+    return env
+
+
+def _hive_sql_string(value: str):
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _render_hive_script(batch_path: str, output_dir: str):
+    template_path = os.path.join("src", "pipelines", "hive", "queries.hql")
+    with open(template_path, "r", encoding="utf-8") as handle:
+        script = handle.read()
+
+    script = script.replace("__INPUT__", _hive_sql_string(os.path.abspath(batch_path)))
+    script = script.replace("__OUTPUT_DIR__", _hive_sql_string(os.path.abspath(output_dir)))
+
+    rendered = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix="hive4_",
+        suffix=".hql",
+        delete=False,
+    )
+    try:
+        rendered.write(script)
+        return rendered.name
+    finally:
+        rendered.close()
+
+
+def _validate_hive4_runtime(hive_bin: str):
+    result = subprocess.run(
+        [hive_bin, "--version"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    version_output = result.stdout.strip()
+    if result.returncode != 0:
+        raise RuntimeError(f"Unable to check Hive version with {hive_bin}: {version_output}")
+
+    match = re.search(r"Hive\s+([0-9]+)\.", version_output)
+    if not match:
+        raise RuntimeError(f"Unable to parse Hive version from: {version_output}")
+
+    if int(match.group(1)) < 4:
+        raise RuntimeError(
+            "Hive 4.x is required for this pipeline. "
+            f"{hive_bin} reported: {version_output}"
+        )
+
+
+def _normalize_hive_output_files(output_dir: str):
+    """Expose Hive output files with the part-* names expected by db_client.py."""
+    for query_folder in ["query1", "query2", "query3"]:
+        folder_path = os.path.join(output_dir, query_folder)
+        if not os.path.isdir(folder_path):
+            continue
+
+        data_files = sorted(
+            file_name
+            for file_name in os.listdir(folder_path)
+            if not file_name.startswith(".") and file_name != "_SUCCESS"
+        )
+        if not data_files:
+            continue
+
+        if all(file_name.startswith("part-") for file_name in data_files):
+            continue
+
+        for index, file_name in enumerate(data_files):
+            if file_name.startswith("part-"):
+                continue
+
+            target_name = f"part-{index:05d}"
+            target_path = os.path.join(folder_path, target_name)
+            if os.path.exists(target_path):
+                continue
+
+            os.rename(os.path.join(folder_path, file_name), target_path)
+
+
 def run_hive_pipeline(batch_path: str, output_dir: str):
-    """Executes the Hive script via local system call."""
+    """Executes the Hive 4 script via local system call."""
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
-        
+
+    hive_bin = _hive_command()
+    beeline_bin = _beeline_command()
+    _validate_hive4_runtime(hive_bin)
+    rendered_script_path = _render_hive_script(batch_path, output_dir)
+
     cmd = [
-        "hive", "-f", "src/pipelines/hive/queries.hql",
-        "-hiveconf", f"INPUT={batch_path}",
-        "-hiveconf", f"OUTPUT_DIR={output_dir}"
+        beeline_bin,
+        "-u", os.getenv("HIVE_JDBC_URL", "jdbc:hive2://"),
+        "-f", rendered_script_path,
     ]
     
     print(f"[*] Executing Hive pipeline for {os.path.basename(batch_path)}...")
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    
-    if result.returncode != 0:
-        print("[-] Hive Job Failed!")
-        print(result.stderr)
-        raise RuntimeError("Hive execution error")
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=_hive_environment(),
+        )
         
-    # FIX: Rename Hive's default '000000_0' output files to 'part-00000' 
-    # so db_client.py can find and ingest them properly.
-    for query_folder in ["query1", "query2", "query3"]:
-        folder_path = os.path.join(output_dir, query_folder)
-        if os.path.exists(folder_path):
-            hive_file = os.path.join(folder_path, "000000_0")
-            if os.path.exists(hive_file):
-                os.rename(hive_file, os.path.join(folder_path, "part-00000"))
+        if result.returncode != 0:
+            print("[-] Hive Job Failed!")
+            print(result.stderr)
+            raise RuntimeError("Hive execution error")
+    finally:
+        if os.path.exists(rendered_script_path):
+            os.unlink(rendered_script_path)
+
+    _normalize_hive_output_files(output_dir)
 
 def run_mongodb_pipeline(batch_path: str, output_dir: str):
     """Executes the MongoDB pipeline via a Python script."""
@@ -92,7 +204,7 @@ def run_mongodb_pipeline(batch_path: str, output_dir: str):
         shutil.rmtree(output_dir)
     
     cmd = [
-        "python", "src/pipelines/mongodb/pipeline.py",
+        sys.executable, "src/pipelines/mongodb/pipeline.py",
         batch_path,
         output_dir
     ]
@@ -118,6 +230,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=100000, help="Number of records per batch")
     parser.add_argument("--input", type=str, default="data/raw/access_log_Jul95.gz", help="Path to raw logs")
     args = parser.parse_args()
+    validate_runtime_environment(args.pipeline)
 
     staging_dir = "data/output/staging_batches"
     base_output_dir = f"data/output/{args.pipeline}_results"
@@ -168,13 +281,8 @@ def main():
         else:
             raise NotImplementedError(f"{args.pipeline} pipeline is not implemented yet")
 
-        # Formulate metadata to pass down to the database script
-        # TODO: check if the below actually works
-        pipeline_display_name = args.pipeline.capitalize()
-        if pipeline_display_name == "Mapreduce": pipeline_display_name = "MapReduce"
-
         metadata = {
-            "pipeline_name": pipeline_display_name, # FIX THIS PROPERLY IG
+            "pipeline_name": PIPELINE_DISPLAY_NAMES[args.pipeline],
             "run_identifier": f"run_{int(start_time)}",
             "batch_id": batch_id,
             "batch_size": records_in_batch,
