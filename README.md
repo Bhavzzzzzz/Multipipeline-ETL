@@ -42,10 +42,12 @@ This project uses the official **NASA HTTP Web Server Logs** (July & August 1995
 | Property | Detail |
 |---|---|
 | **Format** | ASCII text, one HTTP request per line |
-| **Files** | `NASA_access_log_Jul95.gz`, `NASA_access_log_Aug95.gz` |
+| **Files in `data/raw/`** | `NASA_access_log_Jul95.gz`, `NASA_access_log_Aug95.gz`, `access_log_Jul95`, `access_log_Aug95` |
 | **Fields Extracted** | `host`, `timestamp`, `log_date`, `log_hour`, `http_method`, `resource_path`, `protocol_version`, `status_code`, `bytes_transferred` |
 | **Valid Record** | Line must match the common log format; quoted request must contain exactly `method resource protocol` |
 | **Malformed Lines** | Lines failing the above check are counted and skipped by every pipeline — not silently dropped |
+
+The shared batching utility accepts both compressed (`.gz`) and plain-text log files, so the controller can work with either source form.
 
 > ⚠️ **Important:** Do **not** manually clean or preprocess the raw log files outside of the defined ETL pipelines.
 
@@ -79,12 +81,16 @@ A **PostgreSQL** database stores the final aggregated query results alongside ex
 
 | Field | Description |
 |---|---|
-| `pipeline_name` | Engine used (pig / mapreduce / hive / mongodb) |
-| `run_identifier` | Unique run ID |
+| `pipeline_name` | Engine used (Pig / MapReduce / Hive / MongoDB) |
+| `query_name` | Query executed for the batch (`query1`, `query2`, `query3`, or `all`) |
+| `run_identifier` | Unique run label for the execution |
 | `batch_id` | Sequential batch index |
 | `batch_size` | Number of records in the batch |
-| `runtime` | Wall-clock execution time |
+| `records_processed` | Records processed for the batch |
+| `average_batch_size` | Average batch size across the run |
+| `runtime_seconds` | Wall-clock execution time for the batch |
 | `malformed_record_count` | Lines skipped due to parse failure |
+| `execution_timestamp` | Timestamp captured when the metadata row is inserted |
 
 ---
 
@@ -93,10 +99,19 @@ A **PostgreSQL** database stores the final aggregated query results alongside ex
 ```text
 Multipipeline-ETL/
 ├── README.md
+├── requirements.txt
 ├── setup.sh                          # Local environment variables (gitignored)
 ├── .gitignore
+├── VIVA_PREP_GUIDE.md
+├── temp.md
+├── temp2.md
 ├── data/
+│   ├── hive/
+│   │   └── warehouse/
 │   ├── output/
+│   │   ├── hive_results/
+│   │   ├── mapreduce_results/
+│   │   ├── mongodb_results/
 │   │   ├── pig_results/
 │   │   └── staging_batches/
 │   └── raw/
@@ -109,23 +124,43 @@ Multipipeline-ETL/
 │   └── reset_and_create.sql          # Drops and recreates the schema
 ├── docs/
 │   ├── NoSQL26_ET_project_statement.pdf
+│   ├── Phase 1 Status Report.docx
+│   ├── Project_evaluation_guidelines_2026.pdf
+│   ├── WhatsApp Image 2026-04-28 at 03.15.27.jpeg
 │   └── phase1_status.md
 └── src/
     ├── controllers/
     │   ├── main.py                   # Orchestrates batching, execution, and DB loading
+    │   ├── reporting.py              # Interactive CLI for running pipelines and viewing reports
+    │   ├── db_client.py              # Loads pipeline results into PostgreSQL
     │   ├── env_utils.py              # Runtime environment checks (shared by CLI & orchestrator)
     │   ├── utils.py                  # Record-based batch creation and malformed-line counting
-    │   └── db_client.py              # Loads pipeline results into PostgreSQL
     └── pipelines/
+        ├── common/
+        │   └── nasa_log_common.py     # Shared parsing and output helpers
         ├── pig/
-        │   └── queries.pig
+        │   ├── queries.pig
+        │   ├── query1.pig
+        │   ├── query2.pig
+        │   └── query3.pig
         ├── hive/
-        │   └── queries.hql
+        │   ├── queries.hql
+        │   ├── query1.hql
+        │   ├── query2.hql
+        │   └── query3.hql
         ├── mapreduce/
-        │   └── queries.py
+        │   ├── queries.py
+        │   ├── query1.py
+        │   ├── query2.py
+        │   └── query3.py
         └── mongodb/
-            └── pipeline.py
+            ├── pipeline.py
+            ├── query1.py
+            ├── query2.py
+            └── query3.py
 ```
+
+The workspace also contains generated or local-only artifacts such as `derby.log`, `metastore_db/`, and `venv/`; these are intentionally not part of the project source tree.
 
 ---
 
@@ -437,6 +472,7 @@ python src/controllers/main.py --pipeline mongodb \
 ## 9. Notes & Caveats
 
 - **Raw data integrity:** Never manually preprocess the raw log files. All parsing and cleaning is the responsibility of the ETL pipelines.
+- **Input formats:** The controller can read either the gzipped NASA logs or the extracted plain-text copies in `data/raw/`.
 - **Hive performance:** Hive is not optimized for small batches. Use `--batch-size 100000` or larger for any meaningful experiment.
 - **MongoDB `logs` collection:** The MongoDB pipeline drops and recreates this collection on every batch run. Avoid reusing `MONGO_DB` for any other data.
 - **`setup.sh` is gitignored:** This is intentional. Store all secrets and local paths there, never in tracked files.
