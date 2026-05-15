@@ -108,8 +108,8 @@ def reset_database():
             conn.close()
 
 
-def ingest_query_results(batch_output_dir, metadata):
-    """Load run metadata and Pig query outputs for a single batch directory."""
+def ingest_query_results(batch_output_dir, metadata, query_name):
+    """Load run metadata and a single query output for a batch directory."""
     conn = None
     cursor = None
     try:
@@ -119,28 +119,32 @@ def ingest_query_results(batch_output_dir, metadata):
         _ensure_schema(cursor)
 
         run_id = _insert_run_metadata(cursor, metadata)
-        daily_rows = _read_daily_traffic_rows(_resolve_query_output(batch_output_dir, "query1"), run_id)
-        resource_rows = _read_top_resource_rows(_resolve_query_output(batch_output_dir, "query2"), run_id)
-        hourly_rows = _read_hourly_error_rows(_resolve_query_output(batch_output_dir, "query3"), run_id)
-
-        _bulk_insert(
-            cursor,
-            "daily_traffic",
-            "(run_id, log_date, status_code, request_count, total_bytes)",
-            daily_rows,
-        )
-        _bulk_insert(
-            cursor,
-            "top_resources",
-            "(run_id, resource_path, request_count, total_bytes, distinct_host_count)",
-            resource_rows,
-        )
-        _bulk_insert(
-            cursor,
-            "hourly_errors",
-            "(run_id, log_date, log_hour, error_request_count, total_request_count, error_rate, distinct_error_hosts)",
-            hourly_rows,
-        )
+        if query_name == "query1":
+            rows = _read_daily_traffic_rows(_resolve_query_output(batch_output_dir, query_name), run_id)
+            _bulk_insert(
+                cursor,
+                "daily_traffic",
+                "(run_id, log_date, status_code, request_count, total_bytes)",
+                rows,
+            )
+        elif query_name == "query2":
+            rows = _read_top_resource_rows(_resolve_query_output(batch_output_dir, query_name), run_id)
+            _bulk_insert(
+                cursor,
+                "top_resources",
+                "(run_id, resource_path, request_count, total_bytes, distinct_host_count)",
+                rows,
+            )
+        elif query_name == "query3":
+            rows = _read_hourly_error_rows(_resolve_query_output(batch_output_dir, query_name), run_id)
+            _bulk_insert(
+                cursor,
+                "hourly_errors",
+                "(run_id, log_date, log_hour, error_request_count, total_request_count, error_rate, distinct_error_hosts)",
+                rows,
+            )
+        else:
+            raise ValueError(f"Unsupported query name: {query_name}")
 
         conn.commit()
         print(f"[SUCCESS] Loaded PostgreSQL results for run_id={run_id} from {batch_output_dir}.")

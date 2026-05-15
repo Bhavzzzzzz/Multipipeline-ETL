@@ -27,3 +27,4 @@ derby.log
 setup.sh
 .agents/
 .codex/
+*.log

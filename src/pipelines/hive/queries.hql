@@ -1,9 +1,6 @@
--- src/pipelines/hive/queries.hql
--- Execution: main.py renders __INPUT__ and __OUTPUT_DIR__, then runs:
--- beeline -u jdbc:hive2:// -f <rendered_queries.hql>
--- Runtime target: Apache Hive 4.x
+-- Shared Hive setup for the NASA log analytics queries.
+-- Per-query scripts source this file before executing their individual INSERT statements.
 
--- Force local MapReduce execution so the project does not need YARN/Tez services.
 set mapreduce.framework.name=local;
 set hive.execution.engine=mr;
 set hive.strict.managed.tables=false;
@@ -16,17 +13,15 @@ set mapreduce.reduce.memory.mb=1536;
 set hive.metastore.warehouse.dir=__HIVE_WAREHOUSE_DIR__;
 set hive.metastore.warehouse.external.dir=__HIVE_WAREHOUSE_DIR__;
 
--- 1. Create a temporary table and load the raw text file
 DROP VIEW IF EXISTS clean_logs;
 DROP VIEW IF EXISTS parsed_logs;
 DROP TABLE IF EXISTS raw_logs;
+
 CREATE EXTERNAL TABLE raw_logs (line STRING)
 STORED AS TEXTFILE
 LOCATION '__RAW_LOGS_TABLE_DIR__';
 LOAD DATA LOCAL INPATH '__INPUT__' OVERWRITE INTO TABLE raw_logs;
 
--- 2. Create a view that parses the raw strings using RegEx
--- We extract the exact same fields as the Pig script
 CREATE VIEW IF NOT EXISTS parsed_logs AS
 SELECT
     regexp_extract(line, '^(\\S+)', 1) as host,
@@ -39,7 +34,6 @@ SELECT
     regexp_extract(line, '\\s+(\\d+|-)$', 1) as bytes_str
 FROM raw_logs;
 
--- 3. Clean the data (Handle the '-' in bytes, filter out nulls)
 CREATE VIEW IF NOT EXISTS clean_logs AS
 SELECT
     host, log_date, log_hour, http_method, resource_path, protocol_version, status_code,
@@ -53,40 +47,3 @@ WHERE host IS NOT NULL AND host != ''
     AND protocol_version IS NOT NULL AND protocol_version != ''
     AND status_code IS NOT NULL
     AND bytes_str IS NOT NULL AND bytes_str != '';
-
--- ==============================================================================
--- Query 1: Daily Traffic Summary
--- ==============================================================================
-INSERT OVERWRITE LOCAL DIRECTORY '__OUTPUT_DIR__/query1'
-ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
-SELECT log_date, status_code, count(*) as request_count, sum(bytes_transferred) as total_bytes
-FROM clean_logs
-GROUP BY log_date, status_code
-ORDER BY log_date ASC, status_code ASC;
-
--- ==============================================================================
--- Query 2: Top Requested Resources
--- ==============================================================================
-INSERT OVERWRITE LOCAL DIRECTORY '__OUTPUT_DIR__/query2'
-ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
-SELECT resource_path, count(*) as request_count, sum(bytes_transferred) as total_bytes, count(DISTINCT host) as distinct_host_count
-FROM clean_logs
-GROUP BY resource_path
-ORDER BY request_count DESC, resource_path ASC
-LIMIT 20;
-
--- ==============================================================================
--- Query 3: Hourly Error Analysis
--- ==============================================================================
-INSERT OVERWRITE LOCAL DIRECTORY '__OUTPUT_DIR__/query3'
-ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
-SELECT
-    log_date,
-    log_hour,
-    sum(CASE WHEN status_code BETWEEN 400 AND 599 THEN 1 ELSE 0 END) as error_request_count,
-    count(*) as total_request_count,
-    cast(sum(CASE WHEN status_code BETWEEN 400 AND 599 THEN 1 ELSE 0 END) as DOUBLE) / count(*) as error_rate,
-    count(DISTINCT CASE WHEN status_code BETWEEN 400 AND 599 THEN host ELSE NULL END) as distinct_error_hosts
-FROM clean_logs
-GROUP BY log_date, log_hour
-ORDER BY log_date ASC, log_hour ASC;

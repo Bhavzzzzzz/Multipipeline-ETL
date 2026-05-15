@@ -20,46 +20,79 @@ except Exception:
     from env_utils import PIPELINE_DISPLAY_NAMES, validate_runtime_environment
     from utils import process_and_batch_logs
 
-def run_pig_pipeline(batch_path: str, output_dir: str):
+def _render_pig_script(batch_path: str, output_dir: str, query_name: str):
+    template_path = os.path.join("src", "pipelines", "pig", f"{query_name}.pig")
+    common_path = os.path.join("src", "pipelines", "pig", "queries.pig")
+    with open(common_path, "r", encoding="utf-8") as handle:
+        common_script = handle.read()
+
+    with open(template_path, "r", encoding="utf-8") as handle:
+        query_script = handle.read()
+
+    common_script = common_script.replace("__INPUT__", os.path.abspath(batch_path).replace("\\", "/"))
+    query_script = query_script.replace("__OUTPUT_DIR__", os.path.abspath(output_dir).replace("\\", "/"))
+    script = common_script + "\n\n" + query_script
+
+    rendered = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix="pig_query_",
+        suffix=".pig",
+        delete=False,
+    )
+    try:
+        rendered.write(script)
+        return rendered.name
+    finally:
+        rendered.close()
+
+
+def run_pig_pipeline(batch_path: str, output_dir: str, query_name: str):
     """Executes the Pig script via local system call."""
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
+    rendered_script_path = _render_pig_script(batch_path, output_dir, query_name)
 
     cmd = [
         "pig", "-x", "local",
         "-param", f"INPUT={batch_path}",
         "-param", f"OUTPUT_DIR={output_dir}",
-        "src/pipelines/pig/queries.pig"
+        rendered_script_path,
     ]
     
-    print(f"[*] Executing Pig pipeline for {os.path.basename(batch_path)}...")
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    
-    if result.returncode != 0:
-        print("[-] Pig Job Failed!")
-        print(result.stderr)
-        raise RuntimeError("Pig execution error")
+    print(f"[*] Executing Pig {query_name} for {os.path.basename(batch_path)}...")
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-def run_mapreduce_pipeline(batch_path: str, output_dir: str):
+        if result.returncode != 0:
+            print("[-] Pig Job Failed!")
+            if result.stdout.strip():
+                print(result.stdout)
+            if result.stderr.strip():
+                print(result.stderr)
+            raise RuntimeError("Pig execution error")
+    finally:
+        if os.path.exists(rendered_script_path):
+            os.unlink(rendered_script_path)
+
+def run_mapreduce_pipeline(batch_path: str, output_dir: str, query_name: str):
     """Executes the local MapReduce-style query runner."""
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-
     cmd = [
         sys.executable,
-        "src/pipelines/mapreduce/queries.py",
+        os.path.join("src", "pipelines", "mapreduce", f"{query_name}.py"),
         "--input",
         batch_path,
         "--output-dir",
         output_dir,
     ]
 
-    print(f"[*] Executing MapReduce pipeline for {os.path.basename(batch_path)}...")
+    print(f"[*] Executing MapReduce {query_name} for {os.path.basename(batch_path)}...")
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     if result.returncode != 0:
         print("[-] MapReduce Job Failed!")
-        print(result.stderr)
+        if result.stdout.strip():
+            print(result.stdout)
+        if result.stderr.strip():
+            print(result.stderr)
         raise RuntimeError("MapReduce execution error")
 
 def _hive_command():
@@ -108,10 +141,15 @@ def _hive_file_uri(path: str):
     return "file://" + os.path.abspath(path).replace("\\", "/")
 
 
-def _render_hive_script(batch_path: str, output_dir: str):
-    template_path = os.path.join("src", "pipelines", "hive", "queries.hql")
-    with open(template_path, "r", encoding="utf-8") as handle:
-        script = handle.read()
+def _render_hive_script(batch_path: str, output_dir: str, query_name: str):
+    common_template_path = os.path.join("src", "pipelines", "hive", "queries.hql")
+    query_template_path = os.path.join("src", "pipelines", "hive", f"{query_name}.hql")
+
+    with open(common_template_path, "r", encoding="utf-8") as handle:
+        common_script = handle.read()
+
+    common_script = common_script.replace("__INPUT__", _hive_sql_string(os.path.abspath(batch_path)))
+    common_script = common_script.replace("__OUTPUT_DIR__", _hive_sql_string(os.path.abspath(output_dir)))
 
     hive_workspace = os.path.abspath(os.path.join("data", "hive"))
     hive_warehouse_dir = os.path.join(hive_workspace, "warehouse")
@@ -123,23 +161,39 @@ def _render_hive_script(batch_path: str, output_dir: str):
         shutil.rmtree(raw_logs_table_dir)
     os.makedirs(raw_logs_table_dir, exist_ok=True)
 
-    script = script.replace("__INPUT__", _hive_sql_string(os.path.abspath(batch_path)))
-    script = script.replace("__OUTPUT_DIR__", _hive_sql_string(os.path.abspath(output_dir)))
-    script = script.replace("__HIVE_WAREHOUSE_DIR__", _hive_file_uri(hive_warehouse_dir))
-    script = script.replace("__RAW_LOGS_TABLE_DIR__", _hive_file_uri(raw_logs_table_dir))
+    common_script = common_script.replace("__HIVE_WAREHOUSE_DIR__", _hive_sql_string(_hive_file_uri(hive_warehouse_dir)))
+    common_script = common_script.replace("__RAW_LOGS_TABLE_DIR__", _hive_sql_string(_hive_file_uri(raw_logs_table_dir)))
 
-    rendered = tempfile.NamedTemporaryFile(
+    rendered_common = tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
-        prefix="hive4_",
+        prefix="hive4_common_",
         suffix=".hql",
         delete=False,
     )
     try:
-        rendered.write(script)
-        return rendered.name
+        rendered_common.write(common_script)
     finally:
-        rendered.close()
+        rendered_common.close()
+
+    with open(query_template_path, "r", encoding="utf-8") as handle:
+        query_script = handle.read()
+
+    query_script = query_script.replace("__COMMON_HQL__", rendered_common.name.replace("\\", "/"))
+    query_script = query_script.replace("__OUTPUT_DIR__", _hive_sql_string(os.path.abspath(output_dir)))
+
+    rendered_query = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix="hive4_query_",
+        suffix=".hql",
+        delete=False,
+    )
+    try:
+        rendered_query.write(query_script)
+        return rendered_query.name, rendered_common.name
+    finally:
+        rendered_query.close()
 
 
 def _validate_hive4_runtime(hive_bin: str):
@@ -251,24 +305,21 @@ def _normalize_hive_output_files(output_dir: str):
             os.rename(os.path.join(folder_path, file_name), target_path)
 
 
-def run_hive_pipeline(batch_path: str, output_dir: str):
+def run_hive_pipeline(batch_path: str, output_dir: str, query_name: str):
     """Executes the Hive 4 script via local system call."""
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-
     hive_bin = _hive_command()
     beeline_bin = _beeline_command()
     _validate_hive4_runtime(hive_bin)
     _ensure_hive_metastore_initialized()
-    rendered_script_path = _render_hive_script(batch_path, output_dir)
+    rendered_query_script, rendered_common_script = _render_hive_script(batch_path, output_dir, query_name)
 
     cmd = [
         beeline_bin,
         "-u", os.getenv("HIVE_JDBC_URL", "jdbc:hive2://"),
-        "-f", rendered_script_path,
+        "-f", rendered_query_script,
     ]
-    
-    print(f"[*] Executing Hive pipeline for {os.path.basename(batch_path)}...")
+
+    print(f"[*] Executing Hive {query_name} for {os.path.basename(batch_path)}...")
     try:
         result = subprocess.run(
             cmd,
@@ -277,42 +328,50 @@ def run_hive_pipeline(batch_path: str, output_dir: str):
             text=True,
             env=_hive_environment(),
         )
-        
+
         if result.returncode != 0:
             print("[-] Hive Job Failed!")
-            print(result.stderr)
+            if result.stdout.strip():
+                print(result.stdout)
+            if result.stderr.strip():
+                print(result.stderr)
             raise RuntimeError("Hive execution error")
     finally:
-        if os.path.exists(rendered_script_path):
-            os.unlink(rendered_script_path)
+        if os.path.exists(rendered_query_script):
+            os.unlink(rendered_query_script)
+        if os.path.exists(rendered_common_script):
+            os.unlink(rendered_common_script)
 
     _normalize_hive_output_files(output_dir)
 
-def run_mongodb_pipeline(batch_path: str, output_dir: str):
+def run_mongodb_pipeline(batch_path: str, output_dir: str, query_name: str):
     """Executes the MongoDB pipeline via a Python script."""
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-    
     cmd = [
-        sys.executable, "src/pipelines/mongodb/pipeline.py",
+        sys.executable,
+        os.path.join("src", "pipelines", "mongodb", f"{query_name}.py"),
+        "--input",
         batch_path,
-        output_dir
+        "--output-dir",
+        output_dir,
     ]
     
-    print(f"[*] Executing MongoDB pipeline for {os.path.basename(batch_path)}...")
+    print(f"[*] Executing MongoDB {query_name} for {os.path.basename(batch_path)}...")
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     
     if result.returncode != 0:
         print("[-] MongoDB Pipeline Failed!")
-        print(result.stderr)
+        if result.stdout.strip():
+            print(result.stdout)
+        if result.stderr.strip():
+            print(result.stderr)
         raise RuntimeError("MongoDB execution error")
 
-def trigger_db_load(batch_id: int, output_dir: str, metadata: dict):
+def trigger_db_load(batch_id: int, output_dir: str, metadata: dict, query_name: str):
     """
     PostgreSQL ingestion.
     """
-    print(f"[*] Loading results from {output_dir} into PostgreSQL for Batch {batch_id}...")
-    return db_client.ingest_query_results(output_dir, metadata)
+    print(f"[*] Loading {query_name} results from {output_dir} into PostgreSQL for Batch {batch_id}...")
+    return db_client.ingest_query_results(output_dir, metadata, query_name)
 
 
 def _normalize_query_selection(query_name: str):
@@ -330,6 +389,19 @@ def _normalize_query_selection(query_name: str):
         "a": "all",
     }
     return aliases.get(query_name.lower(), "all")
+
+
+def _selected_queries(query_name: str):
+    return ["query1", "query2", "query3"] if query_name == "all" else [query_name]
+
+
+def _remove_path_if_exists(path: str):
+    if not os.path.exists(path):
+        return
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+        return
+    os.remove(path)
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-Pipeline ETL Orchestrator")
@@ -369,12 +441,6 @@ def main():
     num_batches = len(batch_files)
     avg_batch_size = total_records / num_batches if num_batches > 0 else 0
 
-    if selected_query != "all":
-        print(
-            f"[*] Query selection is a placeholder for now. "
-            f"The selected backend will still execute all three queries until per-query pipeline isolation is implemented."
-        )
-    
     # 2. Process each batch sequentially
     batch_iterator = tqdm(
         batch_files,
@@ -389,38 +455,39 @@ def main():
             malformed=malformed_in_batch,
         )
         batch_output_dir = os.path.join(base_output_dir, f"batch_{batch_id}")
-        
-        if args.pipeline == "pig":
-            batch_start = time.time()
-            run_pig_pipeline(batch_path, batch_output_dir)
-        elif args.pipeline == "mapreduce":
-            batch_start = time.time()
-            run_mapreduce_pipeline(batch_path, batch_output_dir)
-        elif args.pipeline == "hive":            
-            batch_start = time.time()            
-            run_hive_pipeline(batch_path, batch_output_dir)
-        elif args.pipeline == "mongodb":
-            batch_start = time.time()
-            run_mongodb_pipeline(batch_path, batch_output_dir)
-        else:
-            raise NotImplementedError(f"{args.pipeline} pipeline is not implemented yet")
 
-        metadata = {
-            "pipeline_name": PIPELINE_DISPLAY_NAMES[args.pipeline],
-            "query_name": selected_query,
-            "run_identifier": f"run_{int(start_time)}",
-            "batch_id": batch_id,
-            "batch_size": records_in_batch,
-            "records_processed": records_in_batch,
-            "average_batch_size": avg_batch_size,
-            "runtime_seconds": None,
-            "malformed_record_count": malformed_in_batch,
-        }
+        for query_name in _selected_queries(selected_query):
+            query_output_dir = os.path.join(batch_output_dir, query_name)
+            _remove_path_if_exists(query_output_dir)
 
-        # 3. Load into DB
-        run_id = trigger_db_load(batch_id, batch_output_dir, metadata)
-        batch_runtime = time.time() - batch_start
-        db_client.update_run_runtime(run_id, batch_runtime)
+            batch_start = time.time()
+            if args.pipeline == "pig":
+                run_pig_pipeline(batch_path, batch_output_dir, query_name)
+            elif args.pipeline == "mapreduce":
+                run_mapreduce_pipeline(batch_path, batch_output_dir, query_name)
+            elif args.pipeline == "hive":
+                run_hive_pipeline(batch_path, batch_output_dir, query_name)
+            elif args.pipeline == "mongodb":
+                run_mongodb_pipeline(batch_path, batch_output_dir, query_name)
+            else:
+                raise NotImplementedError(f"{args.pipeline} pipeline is not implemented yet")
+
+            metadata = {
+                "pipeline_name": PIPELINE_DISPLAY_NAMES[args.pipeline],
+                "query_name": query_name,
+                "run_identifier": f"run_{int(start_time)}_{query_name}",
+                "batch_id": batch_id,
+                "batch_size": records_in_batch,
+                "records_processed": records_in_batch,
+                "average_batch_size": avg_batch_size,
+                "runtime_seconds": None,
+                "malformed_record_count": malformed_in_batch,
+            }
+
+            # 3. Load into DB
+            run_id = trigger_db_load(batch_id, batch_output_dir, metadata, query_name)
+            batch_runtime = time.time() - batch_start
+            db_client.update_run_runtime(run_id, batch_runtime)
 
     # Calculate final runtime (must include write to DB)
     total_runtime = time.time() - start_time
