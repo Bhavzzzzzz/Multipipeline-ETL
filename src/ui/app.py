@@ -81,7 +81,9 @@ else:
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Runtime", f"{meta['runtime_seconds']} sec")
-    col2.metric("Records Processed", f"{meta['records_processed']:,}")
+    # Safely fallback to batch_size if it's an old Phase 1 run
+    records_proc = meta.get('records_processed', meta.get('batch_size', 0))
+    col2.metric("Records Processed", f"{records_proc:,}")
     col3.metric("Malformed Records", f"{meta['malformed_record_count']:,}")
     col4.metric("Avg Batch Size", f"{meta['average_batch_size']:,.0f}")
     
