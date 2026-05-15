@@ -1,37 +1,99 @@
-# Multi-Pipeline ETL and Reporting Framework for Web Server Log Analytics
+# Multi-Pipeline ETL & Reporting Framework
+### Web Server Log Analytics · DAS 839 — NoSQL Systems End Semester Project
 
-This repository contains the prototype for a multi-pipeline ETL (Extract, Transform, Load) and reporting tool. The objective is to process semi-structured web server logs using different data processing paradigms (Apache Pig, MapReduce, Hive, MongoDB) while maintaining identical logical ETL steps and query definitions for fair comparison.
-
-This project was developed for the DAS 839-NoSQL Systems End Semester Project.
-
----
-
-## 📊 Dataset
-
-This project uses the official **NASA HTTP Web Server Logs** (July/August 1995) from the Internet Traffic Archive.
-
-* **Format:** ASCII text log files, one HTTP request per line.
-* **Fields extracted:** `host`, `timestamp`, `log_date`, `log_hour`, `http_method`, `resource_path`, `protocol_version`, `status_code`, and `bytes_transferred`.
-* **Valid analytical record:** A line must match the common log shape and its quoted request must contain exactly `method resource protocol`. Lines that do not expose all required fields are counted as malformed and skipped by every pipeline.
-* **Important:** Do not manually clean or preprocess the files outside of the defined ETL pipelines.
+![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?style=flat-square&logo=python&logoColor=white)
+![Apache Pig](https://img.shields.io/badge/Apache%20Pig-0.18.0-F5820D?style=flat-square)
+![Apache Hive](https://img.shields.io/badge/Apache%20Hive-4.1.0-FDEE21?style=flat-square&logoColor=black)
+![MongoDB](https://img.shields.io/badge/MongoDB-Community-47A248?style=flat-square&logo=mongodb&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Reporting%20DB-4169E1?style=flat-square&logo=postgresql&logoColor=white)
+![Java](https://img.shields.io/badge/Java-17%20(OpenJDK)-ED8B00?style=flat-square&logo=openjdk&logoColor=white)
 
 ---
 
-## 🏗️ Architecture & Core Infrastructure
+## Table of Contents
 
-The framework is orchestrated by a Python controller that physically batches the data, triggers the selected execution engine, and handles the database loading phase.
+1. [Project Overview](#1-project-overview)
+2. [Dataset](#2-dataset)
+3. [Architecture](#3-architecture)
+   - [3.1 Orchestration & Controller](#31-orchestration--controller)
+   - [3.2 Execution Pipelines](#32-execution-pipelines)
+   - [3.3 Reporting Database](#33-reporting-database)
+4. [Repository Structure](#4-repository-structure)
+5. [Analytical Workload](#5-analytical-workload)
+6. [Setup & Installation](#6-setup--installation)
+7. [Environment Variables Reference](#7-environment-variables-reference)
+8. [Running the Framework](#8-running-the-framework)
+9. [Notes & Caveats](#9-notes--caveats)
 
-1. **Orchestration & Controller (Python):** Slices the massive log files into sequential physical batches and triggers the execution jobs.
-2. **Execution Pipelines:** Apache Pig, local MapReduce, Apache Hive, and MongoDB.
-3. **Reporting Database (PostgreSQL):** Stores the final aggregated query results alongside execution metadata (pipeline name, run identifier, batch ID, batch size, runtime, and malformed-record count).
+---
 
-## 📁 File Structure
+## 1. Project Overview
+
+This repository contains the prototype for a **multi-pipeline ETL and reporting framework** designed to process semi-structured web server logs. The goal is to evaluate different data processing paradigms — **Apache Pig**, **MapReduce**, **Apache Hive**, and **MongoDB** — while maintaining identical logical ETL steps and query definitions across all pipelines, enabling a fair, apples-to-apples performance comparison.
+
+A Python controller orchestrates the entire workflow: it physically batches the raw input data, triggers the selected execution engine, collects results, and loads them into a central PostgreSQL reporting database alongside execution metadata.
+
+---
+
+## 2. Dataset
+
+This project uses the official **NASA HTTP Web Server Logs** (July & August 1995) from the Internet Traffic Archive.
+
+| Property | Detail |
+|---|---|
+| **Format** | ASCII text, one HTTP request per line |
+| **Files** | `NASA_access_log_Jul95.gz`, `NASA_access_log_Aug95.gz` |
+| **Fields Extracted** | `host`, `timestamp`, `log_date`, `log_hour`, `http_method`, `resource_path`, `protocol_version`, `status_code`, `bytes_transferred` |
+| **Valid Record** | Line must match the common log format; quoted request must contain exactly `method resource protocol` |
+| **Malformed Lines** | Lines failing the above check are counted and skipped by every pipeline — not silently dropped |
+
+> ⚠️ **Important:** Do **not** manually clean or preprocess the raw log files outside of the defined ETL pipelines.
+
+---
+
+## 3. Architecture
+
+### 3.1 Orchestration & Controller
+
+A Python controller (`src/controllers/main.py`) drives the entire framework. It:
+- Slices large log files into sequential, record-based physical batches.
+- Invokes the selected execution engine for each batch.
+- Collects aggregated output and loads it into PostgreSQL.
+
+### 3.2 Execution Pipelines
+
+Each pipeline implements the same three analytical queries (see [§5](#5-analytical-workload)) against an identical input schema.
+
+| Pipeline | Mode | Entry Point |
+|---|---|---|
+| Apache Pig | Local | `src/pipelines/pig/queries.pig` |
+| MapReduce | Local (Python) | `src/pipelines/mapreduce/queries.py` |
+| Apache Hive | Local (Beeline/JDBC) | `src/pipelines/hive/queries.hql` |
+| MongoDB | Aggregation Pipeline | `src/pipelines/mongodb/pipeline.py` |
+
+### 3.3 Reporting Database
+
+A **PostgreSQL** database stores the final aggregated query results alongside execution metadata for every run.
+
+**Metadata captured per batch run:**
+
+| Field | Description |
+|---|---|
+| `pipeline_name` | Engine used (pig / mapreduce / hive / mongodb) |
+| `run_identifier` | Unique run ID |
+| `batch_id` | Sequential batch index |
+| `batch_size` | Number of records in the batch |
+| `runtime` | Wall-clock execution time |
+| `malformed_record_count` | Lines skipped due to parse failure |
+
+---
+
+## 4. Repository Structure
+
 ```text
 Multipipeline-ETL/
 ├── README.md
-├── setup.sh                         # local/gitignored environment file
-├── temp.md
-├── temp2.md
+├── setup.sh                          # Local environment variables (gitignored)
 ├── .gitignore
 ├── data/
 │   ├── output/
@@ -43,80 +105,91 @@ Multipipeline-ETL/
 │       ├── access_log_Aug95
 │       └── access_log_Jul95
 ├── database/
-│   ├── reset_and_create.sql
-│   └── schema.sql
+│   ├── schema.sql                    # Reporting schema definition
+│   └── reset_and_create.sql          # Drops and recreates the schema
 ├── docs/
 │   ├── NoSQL26_ET_project_statement.pdf
 │   └── phase1_status.md
 └── src/
     ├── controllers/
-    │   ├── main.py
-    │   ├── env_utils.py
-    │   ├── utils.py
-    │   └── db_client.py
+    │   ├── main.py                   # Orchestrates batching, execution, and DB loading
+    │   ├── env_utils.py              # Runtime environment checks (shared by CLI & orchestrator)
+    │   ├── utils.py                  # Record-based batch creation and malformed-line counting
+    │   └── db_client.py              # Loads pipeline results into PostgreSQL
     └── pipelines/
-      ├── pig/
-      │   └── queries.pig
-      ├── hive/
-      │   └── queries.hql
-      ├── mapreduce/
-      │   └── queries.py
-      └── mongodb/
-        └── pipeline.py
+        ├── pig/
+        │   └── queries.pig
+        ├── hive/
+        │   └── queries.hql
+        ├── mapreduce/
+        │   └── queries.py
+        └── mongodb/
+            └── pipeline.py
 ```
 
-The key files for the current phase are:
+---
 
-* `src/controllers/main.py` - orchestrates batching, backend execution, and DB loading.
-* `src/controllers/env_utils.py` - centralizes runtime environment checks shared by the CLI and orchestrator.
-* `src/controllers/utils.py` - creates record-based batches from the raw input files and counts malformed lines.
-* `src/controllers/db_client.py` - loads pipeline results into PostgreSQL.
-* `src/pipelines/pig/queries.pig` - performs the Pig ETL and aggregation work.
-* `src/pipelines/hive/queries.hql` - performs the Hive ETL and aggregation work.
-* `src/pipelines/mapreduce/queries.py` - performs the local MapReduce-style ETL and aggregation work.
-* `src/pipelines/mongodb/pipeline.py` - performs the MongoDB ETL and aggregation work.
-* `setup.sh` - local/gitignored file that exports the environment variables used by `main.py` and `reporting.py`.
-* `database/schema.sql` and `database/reset_and_create.sql` - define and recreate the reporting schema.
+## 5. Analytical Workload
+
+All four pipelines compute the following three queries using **identical output schemas**.
+
+### Query 1 — Daily Traffic Summary
+Computes total request count and bytes transferred, grouped by `log_date` and `status_code`.
+
+### Query 2 — Top Requested Resources
+Identifies the **top 20** resource paths by request count, also reporting the number of distinct requesting hosts.
+
+### Query 3 — Hourly Error Analysis
+Calculates error rates for status codes **400–599** and counts distinct error-generating hosts per `log_date` and `log_hour`.
 
 ---
 
-## 🔍 Analytical Workload
-All pipelines must successfully compute the following three mandatory queries using the exact same output schemas:
+## 6. Setup & Installation
 
-* **Query 1: Daily Traffic Summary** - Computes total request count and bytes transferred per `log_date` and `status_code`.
-* **Query 2: Top Requested Resources** - Identifies the top 20 requested resource paths by request count, including distinct hosts.
-* **Query 3: Hourly Error Analysis** - Calculates error rates (status codes 400-599) and distinct error-generating hosts per `log_date` and `log_hour`.
+### Setup Index
+
+- [Step 1 — System Packages](#step-1--install-system-packages)
+- [Step 2 — Verify Core Dependencies](#step-2--verify-core-dependencies)
+- [Step 3 — Python Virtual Environment](#step-3--python-virtual-environment)
+- [Step 4 — Apache Pig](#step-4--apache-pig)
+- [Step 5 — Apache Hadoop](#step-5--apache-hadoop)
+- [Step 6 — Apache Hive 4](#step-6--apache-hive-4)
+- [Step 7 — MongoDB](#step-7--mongodb)
+- [Step 8 — Environment Variables (`setup.sh`)](#step-8--environment-variables-setupsh)
+- [Step 9 — PostgreSQL Schema](#step-9--postgresql-schema)
 
 ---
-
-## 🚀 Setup & Execution
 
 ### Prerequisites
-* Java 17 (OpenJDK, required for Pig and Hive 4)
-* Python 3.8+
-* Apache Pig (Local Mode)
-* Apache Hadoop (Local Mode support for Hive)
-* Apache Hive 4.x (Local Mode)
-* MongoDB Community Server or a reachable MongoDB instance
-* PostgreSQL (Running inside WSL/Ubuntu or systemd Linux recommended)
-* `psycopg2-binary` (Python library for PostgreSQL)
-* `pymongo` (Python library for MongoDB)
-* `tqdm` (CLI progress bar used by the controller)
 
-### Environment setup
+| Dependency | Version | Notes |
+|---|---|---|
+| Java (OpenJDK) | 17 | Required by Pig and Hive 4 |
+| Python | 3.8+ | Controller and MapReduce pipeline |
+| Apache Pig | 0.18.0 | Local mode |
+| Apache Hadoop | 3.3.6 | Local mode support for Hive |
+| Apache Hive | 4.1.0 | Local mode via Beeline |
+| MongoDB | Community | Local or remote instance |
+| PostgreSQL | Any recent | Reporting database |
+| `psycopg2-binary` | pip | PostgreSQL Python client |
+| `pymongo` | pip | MongoDB Python client |
+| `tqdm` | pip | CLI progress bar |
 
-Use the following order. Each step has a quick verification command so you can confirm it worked before moving on.
+---
 
-1) Install the system packages you need:
+### Step 1 — Install System Packages
 
 ```bash
 sudo apt update
-sudo apt install -y openjdk-17-jdk python3 python3-pip python3-venv postgresql postgresql-contrib wget curl gnupg tar
+sudo apt install -y openjdk-17-jdk python3 python3-pip python3-venv \
+    postgresql postgresql-contrib wget curl gnupg tar
 ```
 
-If you want MongoDB on the same machine, install it using MongoDB's official repository for your Ubuntu release.
+For MongoDB, use the [official MongoDB repository](https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-ubuntu/) for your Ubuntu release.
 
-2) Verify Java, Python, and PostgreSQL:
+---
+
+### Step 2 — Verify Core Dependencies
 
 ```bash
 java -version
@@ -124,7 +197,9 @@ python3 --version
 psql --version
 ```
 
-3) Create the virtual environment and install Python packages:
+---
+
+### Step 3 — Python Virtual Environment
 
 ```bash
 cd /mnt/c/Codes/Multipipeline-ETL
@@ -133,143 +208,107 @@ source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
+# Verify
 python -c "import psycopg2, pymongo, tqdm; print('Python dependencies OK')"
 ```
 
-4) Install Pig under `/opt` and verify it:
+---
+
+### Step 4 — Apache Pig
 
 ```bash
 cd /tmp
 wget https://downloads.apache.org/pig/pig-0.18.0/pig-0.18.0.tar.gz
 sudo tar -xzf pig-0.18.0.tar.gz -C /opt
 
+# Verify
 pig -version
-java -version
 ```
 
-5) Install Hadoop under `/opt` and verify it:
+---
+
+### Step 5 — Apache Hadoop
 
 ```bash
 cd /tmp
 wget -c https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
 sudo tar -xzf hadoop-3.3.6.tar.gz -C /opt
 
+# Verify
 /opt/hadoop-3.3.6/bin/hadoop version
 ```
 
-6) Install Hive 4 under `/opt` and initialize the local metastore:
+---
+
+### Step 6 — Apache Hive 4
 
 ```bash
 cd /tmp
 wget -c https://archive.apache.org/dist/hive/hive-4.1.0/apache-hive-4.1.0-bin.tar.gz
 sudo tar -xzf apache-hive-4.1.0-bin.tar.gz -C /opt
 
+# Initialize the local Derby metastore
 cd /mnt/c/Codes/Multipipeline-ETL
 mkdir -p data/hive/warehouse
 schematool -dbType derby -initSchema
 
+# Verify
 /opt/apache-hive-4.1.0-bin/bin/hive --version
 /opt/apache-hive-4.1.0-bin/bin/beeline --version
 ```
 
-The Hive pipeline uses a project-local warehouse under `data/hive/warehouse`.
-`main.py` renders that path into the Hive script for each run, so you do not need to create or use `/user/hive/warehouse`.
-Hive also stages the current batch table under the selected batch output directory before writing `query1`, `query2`, and `query3`.
-Avoid very small Hive batch sizes for full-dataset experiments. Hive has high per-batch startup and MapReduce planning overhead, so a batch size like `1000` can take many hours across thousands of batches. Use the same batch size across pipelines for a fair experiment, but prefer larger values such as `100000` or `1000000` when comparing Hive.
+> 💡 **Hive Batch Size Note:** Hive carries high per-batch startup and MapReduce planning overhead. Avoid very small batch sizes (e.g., `1000`) for full-dataset experiments — they can result in many hours of runtime across thousands of batches. Prefer larger values such as `100000` or `1000000` when benchmarking Hive, and use a consistent batch size across all pipelines for fair comparison.
+>
+> The Hive pipeline uses a project-local warehouse under `data/hive/warehouse`. `main.py` renders this path into the Hive script at runtime — you do not need to create or configure `/user/hive/warehouse`.
 
-7) Install MongoDB Community Server if you want to run the MongoDB pipeline locally.
+---
 
-Use MongoDB's official Ubuntu instructions for your Ubuntu release:
-https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-ubuntu/
+### Step 7 — MongoDB
 
-After installation, verify the binaries, start the `mongod` service, and confirm that the server accepts connections:
+Follow the [official MongoDB installation guide](https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-ubuntu/) for your Ubuntu release, then verify and start the service:
 
 ```bash
+# Verify binaries
 mongod --version
 mongosh --version
 
+# Start and check the service
 sudo service mongod start
 service mongod status
 mongosh --quiet --eval 'db.runCommand({ ping: 1 })'
 ```
 
-The service name used by the official MongoDB packages is usually `mongod`, not `mongodb`.
-If the commands above are missing, install MongoDB from the official MongoDB repository for your Ubuntu release, use MongoDB Atlas, or use Docker and set `MONGO_URI` accordingly.
+> ℹ️ The official package service name is `mongod`, not `mongodb`. If the commands above are unavailable, consider using MongoDB Atlas or Docker and set `MONGO_URI` accordingly.
 
-8) Create your local `setup.sh`, source it, and verify the key variables:
-
-```bash
-cd /mnt/c/Codes/Multipipeline-ETL
-source setup.sh
-
-echo "$JAVA_HOME"
-echo "$PIG_HOME"
-echo "$HADOOP_HOME"
-echo "$HIVE_HOME"
-echo "$PGDATABASE"
-echo "$MONGO_URI"
-echo "$MONGO_DB"
-```
-
-9) Create the PostgreSQL schema:
-
-```bash
-sudo service postgresql start
-sudo -u postgres createdb nosql_project 2>/dev/null || true
-sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'your_password';"
-sudo -u postgres psql -d nosql_project -f database/reset_and_create.sql
-```
-
-10) Launch the CLI:
-
-```bash
-source venv/bin/activate
-source setup.sh
-sudo service postgresql start
-sudo service mongod start
-python src/controllers/reporting.py
-```
-
-11) Manual execution, if needed:
-
-```bash
-source venv/bin/activate
-source setup.sh
-
-python src/controllers/main.py --pipeline pig --batch-size 100000 --input data/raw/NASA_access_log_Jul95.gz
-python src/controllers/main.py --pipeline hive --batch-size 100000 --input data/raw/NASA_access_log_Jul95.gz
-python src/controllers/main.py --pipeline mongodb --batch-size 100000 --input data/raw/NASA_access_log_Jul95.gz
-```
+> ⚠️ **Warning:** The MongoDB pipeline drops and recreates the `logs` collection inside `MONGO_DB` for each batch run. Do **not** point `MONGO_DB` at a database containing a `logs` collection with unrelated data you wish to keep.
 
 ---
 
-## 🚀 Environment Variables
+### Step 8 — Environment Variables (`setup.sh`)
 
-Before running `reporting.py` or `main.py`, ensure the following variables are set in your session. The easiest option is to edit the password/path values in your local `setup.sh`, then source it:
+Create a local `setup.sh` file (this file is gitignored), populate it with the values below, and source it before running anything:
 
 ```bash
 source setup.sh
 ```
 
-The file exports the same variables shown below. You can also add these to your `.bashrc` or a shell profile:
-
-Copy the example below into your local `setup.sh` and keep it untracked:
+**Template — copy into your local `setup.sh`:**
 
 ```bash
 #!/usr/bin/env bash
 
-# Database (PostgreSQL)
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
 export PGDATABASE=nosql_project
 export PGUSER=postgres
 export PGPASSWORD='your_password'
 export PGHOST=localhost
 export PGPORT=5432
 
-# MongoDB
+# ── MongoDB ───────────────────────────────────────────────────────────────────
 export MONGO_URI='mongodb://localhost:27017/'
 export MONGO_DB='nosql_project'
 
-# Big Data Tools
+# ── Big Data Tools ────────────────────────────────────────────────────────────
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 export PIG_HOME=/opt/pig-0.18.0
 export HADOOP_HOME=/opt/hadoop-3.3.6
@@ -282,52 +321,130 @@ export PATH="$JAVA_HOME/bin:$PIG_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$HI
 export PIG_CLASSPATH=/usr/share/java/commons-text.jar:/usr/share/java/commons-compress.jar:/usr/share/java/commons-lang3.jar:$PIG_CLASSPATH
 ```
 
-### How to find the install locations
-
-Use these commands on your machine to discover the correct paths before filling the variables above:
+**To find the correct paths on your machine:**
 
 ```bash
 # Java
-which java
 readlink -f "$(which java)"
 
 # Pig
-which pig
-pig -version
+which pig && pig -version
 
 # Hadoop
-which hadoop
-hadoop version
+which hadoop && hadoop version
 
 # Hive / Beeline
-which hive
+which hive && hive --version
 which beeline
-hive --version
 
 # PostgreSQL
-which psql
-psql --version
+which psql && psql --version
 
 # MongoDB
-which mongod
+which mongod && mongod --version
 which mongosh
-mongosh --quiet --eval 'db.runCommand({ ping: 1 })'
 ```
 
-Typical path patterns on Linux are:
+Verify all key variables are exported correctly after sourcing:
 
 ```bash
-JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-PIG_HOME=/opt/pig-0.18.0
-HADOOP_HOME=/opt/hadoop-3.3.6
-HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
-HIVE_HOME=/opt/apache-hive-4.1.0-bin
-HIVE_BIN=$HIVE_HOME/bin/hive
-HIVE_BEELINE_BIN=$HIVE_HOME/bin/beeline
+source setup.sh
+echo "$JAVA_HOME"
+echo "$PIG_HOME"
+echo "$HADOOP_HOME"
+echo "$HIVE_HOME"
+echo "$PGDATABASE"
+echo "$MONGO_URI"
+echo "$MONGO_DB"
 ```
 
-For MongoDB, `MONGO_URI` is usually `mongodb://localhost:27017/` when `mongod` is running locally. Use a remote MongoDB or Atlas connection string if that is where your database runs. `MONGO_DB` can stay `nosql_project` unless you intentionally want a different database name.
+---
 
-The MongoDB pipeline loads each physical batch into the `logs` collection inside `MONGO_DB`, drops that collection for the current batch run, computes the three aggregations, and writes local output files that are then loaded into PostgreSQL. Do not point `MONGO_DB` at a database that contains unrelated data in a `logs` collection you care about.
+### Step 9 — PostgreSQL Schema
 
-Keep the actual values in your own local `setup.sh` or shell profile, not in git.
+```bash
+sudo service postgresql start
+sudo -u postgres createdb nosql_project 2>/dev/null || true
+sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'your_password';"
+sudo -u postgres psql -d nosql_project -f database/reset_and_create.sql
+```
+
+---
+
+## 7. Environment Variables Reference
+
+| Variable | Example Value | Description |
+|---|---|---|
+| `PGDATABASE` | `nosql_project` | Target PostgreSQL database |
+| `PGUSER` | `postgres` | PostgreSQL user |
+| `PGPASSWORD` | `your_password` | PostgreSQL password |
+| `PGHOST` | `localhost` | PostgreSQL host |
+| `PGPORT` | `5432` | PostgreSQL port |
+| `MONGO_URI` | `mongodb://localhost:27017/` | MongoDB connection string |
+| `MONGO_DB` | `nosql_project` | MongoDB database name |
+| `JAVA_HOME` | `/usr/lib/jvm/java-17-openjdk-amd64` | Java 17 installation root |
+| `PIG_HOME` | `/opt/pig-0.18.0` | Apache Pig root |
+| `HADOOP_HOME` | `/opt/hadoop-3.3.6` | Apache Hadoop root |
+| `HADOOP_CONF_DIR` | `$HADOOP_HOME/etc/hadoop` | Hadoop configuration directory |
+| `HIVE_HOME` | `/opt/apache-hive-4.1.0-bin` | Apache Hive root |
+| `HIVE_BIN` | `$HIVE_HOME/bin/hive` | Hive executable path |
+| `HIVE_BEELINE_BIN` | `$HIVE_HOME/bin/beeline` | Beeline executable path |
+| `HIVE_JDBC_URL` | `jdbc:hive2://` | JDBC URL for local Hive (embedded) |
+
+> 🔒 Keep actual credentials in your local `setup.sh` or shell profile — never commit them to version control.
+
+---
+
+## 8. Running the Framework
+
+Ensure PostgreSQL and MongoDB are running, and that your virtual environment and environment variables are active before executing any of the commands below.
+
+### Launch the Interactive CLI
+
+```bash
+source venv/bin/activate
+source setup.sh
+sudo service postgresql start
+sudo service mongod start
+
+python src/controllers/reporting.py
+```
+
+### Manual Pipeline Execution
+
+```bash
+source venv/bin/activate
+source setup.sh
+
+# Apache Pig
+python src/controllers/main.py --pipeline pig \
+    --batch-size 100000 \
+    --input data/raw/NASA_access_log_Jul95.gz
+
+# Apache Hive
+python src/controllers/main.py --pipeline hive \
+    --batch-size 100000 \
+    --input data/raw/NASA_access_log_Jul95.gz
+
+# MongoDB
+python src/controllers/main.py --pipeline mongodb \
+    --batch-size 100000 \
+    --input data/raw/NASA_access_log_Jul95.gz
+```
+
+---
+
+## 9. Notes & Caveats
+
+- **Raw data integrity:** Never manually preprocess the raw log files. All parsing and cleaning is the responsibility of the ETL pipelines.
+- **Hive performance:** Hive is not optimized for small batches. Use `--batch-size 100000` or larger for any meaningful experiment.
+- **MongoDB `logs` collection:** The MongoDB pipeline drops and recreates this collection on every batch run. Avoid reusing `MONGO_DB` for any other data.
+- **`setup.sh` is gitignored:** This is intentional. Store all secrets and local paths there, never in tracked files.
+- **Malformed records:** Every pipeline reports a malformed-record count per batch. These counts are stored in PostgreSQL and can be used to verify consistency across pipelines.
+- **Typical install paths** (Linux): `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`, `PIG_HOME=/opt/pig-0.18.0`, `HADOOP_HOME=/opt/hadoop-3.3.6`, `HIVE_HOME=/opt/apache-hive-4.1.0-bin`. Adjust if your system differs.
+
+---
+
+<div align="center">
+  <sub>DAS 839 — NoSQL Systems · Multi-Pipeline ETL Framework</sub>
+</div>
