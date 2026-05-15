@@ -34,7 +34,7 @@ valid_logs = FILTER clean_logs BY
     AND resource_path IS NOT NULL
     AND protocol_version IS NOT NULL
     AND status_code IS NOT NULL
-    AND bytes_str IS NOT NULL;
+    AND bytes_transferred IS NOT NULL;
 
 -- ==============================================================================
 -- Query 1: Daily Traffic Summary
