@@ -1,5 +1,6 @@
 # src/controllers/main.py
 import os
+import glob
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,26 @@ except Exception:
     import db_client
     from env_utils import PIPELINE_DISPLAY_NAMES, validate_runtime_environment
     from utils import process_and_batch_logs
+
+
+def _find_hadoop_streaming_jar():
+    jar = os.getenv("HADOOP_STREAMING_JAR")
+    if jar and os.path.exists(jar):
+        return jar
+
+    hadoop_home = os.getenv("HADOOP_HOME")
+    if hadoop_home:
+        candidates = glob.glob(os.path.join(hadoop_home, "**", "hadoop-streaming-*.jar"), recursive=True)
+        if candidates:
+            return candidates[0]
+
+    return None
+
+
+def _mapreduce_environment(query_name: str):
+    env = os.environ.copy()
+    env["MAPREDUCE_QUERY"] = query_name
+    return env
 
 def _render_pig_script(batch_path: str, output_dir: str, query_name: str):
     template_path = os.path.join("src", "pipelines", "pig", f"{query_name}.pig")
@@ -74,18 +95,35 @@ def run_pig_pipeline(batch_path: str, output_dir: str, query_name: str):
             os.unlink(rendered_script_path)
 
 def run_mapreduce_pipeline(batch_path: str, output_dir: str, query_name: str):
-    """Executes the local MapReduce-style query runner."""
+    """Executes the Hadoop Streaming MapReduce job directly."""
+    streaming_jar = _find_hadoop_streaming_jar()
+    if not streaming_jar:
+        raise RuntimeError("Hadoop streaming jar not found. Set HADOOP_STREAMING_JAR or HADOOP_HOME.")
+
+    mapper_path = os.path.abspath(os.path.join("src", "pipelines", "mapreduce", "mapper.py"))
+    reducer_path = os.path.abspath(os.path.join("src", "pipelines", "mapreduce", "reducer.py"))
+    common_path = os.path.abspath(os.path.join("src", "pipelines", "common", "nasa_log_common.py"))
+
     cmd = [
-        sys.executable,
-        os.path.join("src", "pipelines", "mapreduce", f"{query_name}.py"),
-        "--input",
+        os.getenv("HADOOP_BIN", "hadoop"),
+        "jar",
+        streaming_jar,
+        "-files",
+        ",".join([mapper_path, reducer_path, common_path]),
+        "-cmdenv",
+        f"MAPREDUCE_QUERY={query_name}",
+        "-mapper",
+        os.path.basename(mapper_path),
+        "-reducer",
+        os.path.basename(reducer_path),
+        "-input",
         batch_path,
-        "--output-dir",
-        output_dir,
+        "-output",
+        os.path.join(output_dir, query_name),
     ]
 
     print(f"[*] Executing MapReduce {query_name} for {os.path.basename(batch_path)}...")
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=_mapreduce_environment(query_name))
 
     if result.returncode != 0:
         print("[-] MapReduce Job Failed!")

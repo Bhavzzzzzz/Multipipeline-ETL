@@ -28,3 +28,4 @@ setup.sh
 .agents/
 .codex/
 *.log
+output/

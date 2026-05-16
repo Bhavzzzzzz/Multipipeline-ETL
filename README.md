@@ -69,7 +69,7 @@ Each pipeline implements the same three analytical queries (see [§5](#5-analyti
 | Pipeline | Mode | Entry Point |
 |---|---|---|
 | Apache Pig | Local | `src/pipelines/pig/queries.pig` |
-| MapReduce | Local (Python) | `src/pipelines/mapreduce/queries.py` |
+| MapReduce | Hadoop Streaming (requires Hadoop) | `src/pipelines/mapreduce/mapper.py` + `src/pipelines/mapreduce/reducer.py` |
 | Apache Hive | Local (Beeline/JDBC) | `src/pipelines/hive/queries.hql` |
 | MongoDB | Aggregation Pipeline | `src/pipelines/mongodb/pipeline.py` |
 
@@ -150,9 +150,8 @@ Multipipeline-ETL/
         │   └── query3.hql
         ├── mapreduce/
         │   ├── queries.py
-        │   ├── query1.py
-        │   ├── query2.py
-        │   └── query3.py
+        │   ├── mapper.py
+        │   └── reducer.py
         └── mongodb/
             ├── pipeline.py
             ├── query1.py
@@ -272,6 +271,38 @@ sudo tar -xzf hadoop-3.3.6.tar.gz -C /opt
 # Verify
 /opt/hadoop-3.3.6/bin/hadoop version
 ```
+
+#### Hadoop Streaming and MapReduce pipeline
+
+This project uses **Hadoop Streaming** for the MapReduce pipeline. The MapReduce pipeline is implemented as a streaming job that runs the project-provided Python `mapper.py` and `reducer.py` under `src/pipelines/mapreduce/` and requires the `hadoop-streaming` jar to be available on the system.
+
+Setup notes:
+
+- Ensure `HADOOP_HOME` points at your Hadoop distribution (for example `/opt/hadoop-3.3.6`).
+- Optionally set `HADOOP_BIN` to the `hadoop` executable path if it's not on `PATH`.
+- Locate the streaming jar and set `HADOOP_STREAMING_JAR` to its full path. Typical location inside Hadoop distros:
+
+```
+$HADOOP_HOME/share/hadoop/tools/lib/hadoop-streaming-*.jar
+```
+
+Example environment exports to add to `setup.sh`:
+
+```bash
+export HADOOP_HOME=/opt/hadoop-3.3.6
+export HADOOP_BIN=$HADOOP_HOME/bin/hadoop
+export HADOOP_STREAMING_JAR=$HADOOP_HOME/share/hadoop/tools/lib/hadoop-streaming-3.3.6.jar
+export PATH="$HADOOP_BIN:$PATH"
+```
+
+Run the MapReduce pipeline (controller will call this runner when you select the MapReduce engine):
+
+```bash
+# Run MapReduce through the controller (example)
+python3 src/controllers/main.py --pipeline mapreduce --query query1 --input data/raw/access_log_Aug95 --batch-size 100000
+```
+
+Important: this pipeline has no local fallback — Hadoop and the streaming jar **must** be available. The runner will fail fast if the streaming jar or `hadoop` binary cannot be found.
 
 ---
 

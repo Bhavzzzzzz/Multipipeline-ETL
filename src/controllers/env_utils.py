@@ -7,20 +7,21 @@ ENV_GROUPS = {
     "PostgreSQL": ["PGDATABASE", "PGUSER", "PGPASSWORD", "PGHOST", "PGPORT"],
     "Java": ["JAVA_HOME"],
     "Pig": ["PIG_HOME", "PIG_CLASSPATH"],
-    "Hadoop": ["HADOOP_HOME", "HADOOP_CONF_DIR"],
+    "Hadoop": ["HADOOP_HOME", "HADOOP_CONF_DIR", "HADOOP_STREAMING_JAR"],
     "Hive": ["HIVE_HOME"],
     "MongoDB": ["MONGO_URI", "MONGO_DB"],
 }
 
 PIPELINE_ENV_GROUPS = {
     "pig": ["PostgreSQL", "Java", "Pig"],
-    "mapreduce": ["PostgreSQL"],
+    "mapreduce": ["PostgreSQL", "Hadoop"],
     "hive": ["PostgreSQL", "Java", "Hadoop", "Hive"],
     "mongodb": ["PostgreSQL", "MongoDB"],
 }
 
 PIPELINE_COMMANDS = {
     "pig": ["pig"],
+    "mapreduce": ["hadoop"],
     "hive": ["hadoop"],
 }
 
@@ -51,6 +52,8 @@ def missing_env_for_pipeline(pipeline_name):
 
 def missing_commands_for_pipeline(pipeline_name):
     commands = PIPELINE_COMMANDS.get(pipeline_name, [])
+    if pipeline_name == "mapreduce":
+        commands = commands + [os.getenv("HADOOP_BIN", "hadoop")]
     if pipeline_name == "hive":
         hive_home = os.getenv("HIVE_HOME")
         beeline_command = os.getenv("HIVE_BEELINE_BIN")
@@ -84,11 +87,12 @@ def missing_commands_for_all_pipelines():
     beeline_command = os.getenv("HIVE_BEELINE_BIN")
     if not beeline_command and hive_home:
         beeline_command = os.path.join(hive_home, "bin", "beeline")
+    hadoop_command = os.getenv("HADOOP_BIN", "hadoop")
 
     return sorted(
         {
             command
-            for commands in list(PIPELINE_COMMANDS.values()) + [[hive_command, beeline_command or "beeline"]]
+            for commands in list(PIPELINE_COMMANDS.values()) + [[hadoop_command], [hive_command, beeline_command or "beeline"]]
             for command in commands
             if shutil.which(command) is None
         }
