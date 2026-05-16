@@ -1,1 +1,0 @@
-/tmp/hadoop-krishna/mapred/local/job_local1521085460_0001_93a6be6f-d380-44f1-83c0-c14a05c0dfc0/mapper.py

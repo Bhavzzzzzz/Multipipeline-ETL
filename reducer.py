@@ -1,1 +1,0 @@
-/tmp/hadoop-krishna/mapred/local/job_local1521085460_0001_23bdbc61-27b3-4d02-992d-a4aa244e9037/reducer.py

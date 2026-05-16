@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError, ServerSelectionTimeoutError
 
@@ -8,6 +9,9 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from src.pipelines.common.nasa_log_common import QUERY_NAMES, load_records, prepare_output_dir, write_part_file
+
+
+INSERT_CHUNK_SIZE = 10000
 
 
 def _collect_query_rows(collection, query_name):
@@ -30,7 +34,7 @@ def _collect_query_rows(collection, query_name):
                 }
             },
             {"$sort": {"log_date": 1, "status_code": 1}},
-        ])
+        ], allowDiskUse=True)
         return [[row["log_date"], row["status_code"], row["request_count"], row["total_bytes"]] for row in results]
 
     if query_name == "query2":
@@ -54,7 +58,7 @@ def _collect_query_rows(collection, query_name):
             },
             {"$sort": {"request_count": -1, "resource_path": 1}},
             {"$limit": 20},
-        ])
+        ], allowDiskUse=True)
         return [
             [row["resource_path"], row["request_count"], row["total_bytes"], row["distinct_host_count"]]
             for row in results
@@ -98,7 +102,7 @@ def _collect_query_rows(collection, query_name):
                 }
             },
             {"$sort": {"log_date": 1, "log_hour": 1}},
-        ])
+        ], allowDiskUse=True)
         return [
             [
                 row["log_date"],
@@ -129,20 +133,48 @@ def _connect_to_mongodb():
 
     return client
 
+
+def _insert_records_in_chunks(collection, records, chunk_size=INSERT_CHUNK_SIZE):
+    if not records:
+        return
+
+    for start in range(0, len(records), chunk_size):
+        chunk = records[start:start + chunk_size]
+        collection.insert_many(chunk, ordered=False)
+
+
+def _stream_insert_records(collection, input_path, chunk_size=INSERT_CHUNK_SIZE):
+    """Parse and insert records incrementally to keep memory usage bounded."""
+    from src.pipelines.common.nasa_log_common import parse_log_line
+
+    buffer = []
+    with open(input_path, "r", encoding="latin-1", errors="ignore") as handle:
+        for line in handle:
+            record = parse_log_line(line)
+            if record is None:
+                continue
+            buffer.append(record)
+            if len(buffer) >= chunk_size:
+                collection.insert_many(buffer, ordered=False)
+                buffer.clear()
+
+    if buffer:
+        collection.insert_many(buffer, ordered=False)
+
 def run_pipeline(input_path, output_dir, query_name="all"):
     """Executes the MongoDB ETL pipeline."""
     client = _connect_to_mongodb()
+    collection = None
     try:
         db = client[os.getenv("MONGO_DB", "nosql_project")]
-        collection = db["logs"]
+        # Use an isolated, per-run collection to avoid mutating shared collections
+        # and reduce the chance of service disruption during concurrent/manual use.
+        collection_name = f"logs_tmp_{os.getpid()}_{int(time.time() * 1000)}"
+        collection = db[collection_name]
+        collection.delete_many({})
 
-        # 1. Clear existing data for this batch (or just drop it since we process one batch at a time)
-        collection.drop()
-
-        # 2. Parse and Load
-        records = load_records(input_path)
-        if records:
-            collection.insert_many(records)
+        # 2. Parse and load incrementally to avoid large in-memory buffers.
+        _stream_insert_records(collection, input_path)
 
         if query_name == "all":
             prepare_output_dir(output_dir)
@@ -160,6 +192,11 @@ def run_pipeline(input_path, output_dir, query_name="all"):
             "MongoDB operation failed. Ensure mongod is running and MONGO_URI points to the correct server before running this pipeline."
         ) from exc
     finally:
+        if collection is not None:
+            try:
+                collection.drop()
+            except Exception:
+                pass
         client.close()
 
 def main():
