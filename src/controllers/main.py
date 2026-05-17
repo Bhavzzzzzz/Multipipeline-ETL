@@ -465,13 +465,10 @@ def main():
         shutil.rmtree(staging_dir)
     os.makedirs(staging_dir)
 
-    # Start the official runtime timer
     start_time = time.time()
-
-    # 1. Split logs using the shared utility helper
     input_files = args.inputs if args.inputs else [args.input]
 
-    batch_files, total_records, total_malformed_records = process_and_batch_logs(
+    batch_files, total_records, _ = process_and_batch_logs(
         input_files,
         staging_dir,
         batch_size=args.batch_size,
@@ -479,20 +476,12 @@ def main():
     num_batches = len(batch_files)
     avg_batch_size = total_records / num_batches if num_batches > 0 else 0
 
-    # 2. Process each batch sequentially
-    batch_iterator = tqdm(
-        batch_files,
-        total=num_batches,
-        desc=f"Processing {args.pipeline.upper()} batches",
-        unit="batch",
-    )
-    for batch_id, batch_path, records_in_batch, malformed_in_batch in batch_iterator:
-        batch_iterator.set_postfix(
-            batch_id=batch_id,
-            records=records_in_batch,
-            malformed=malformed_in_batch,
-        )
+    total_malformed_records = 0
+    print("\n--- Pipeline Execution & Native Cleaning ---")
+
+    for batch_id, batch_path, records_in_batch, _ in batch_files:
         batch_output_dir = os.path.join(base_output_dir, f"batch_{batch_id}")
+        malformed_in_batch = 0
 
         for query_name in _selected_queries(selected_query):
             query_output_dir = os.path.join(batch_output_dir, query_name)
@@ -510,6 +499,20 @@ def main():
             else:
                 raise NotImplementedError(f"{args.pipeline} pipeline is not implemented yet")
 
+            # --- NATIVELY CALCULATE DROPPED RECORDS ---
+            # By reading the pipeline's output CSV, we can see exactly how many valid 
+            # records survived the pipeline's internal cleaning process.
+            try:
+                paths = db_client._resolve_query_output(batch_output_dir, query_name)
+                if query_name == "query1":
+                    valid_records = sum(int(row[2]) for row in db_client._read_csv_rows(paths) if len(row) == 4)
+                    malformed_in_batch = records_in_batch - valid_records
+                elif query_name == "query3":
+                    valid_records = sum(int(row[3]) for row in db_client._read_csv_rows(paths) if len(row) == 6)
+                    malformed_in_batch = records_in_batch - valid_records
+            except Exception:
+                pass
+
             metadata = {
                 "pipeline_name": PIPELINE_DISPLAY_NAMES[args.pipeline],
                 "query_name": query_name,
@@ -522,14 +525,16 @@ def main():
                 "malformed_record_count": malformed_in_batch,
             }
 
-            # 3. Load into DB
             run_id = trigger_db_load(batch_id, batch_output_dir, metadata, query_name)
             batch_runtime = time.time() - batch_start
             db_client.update_run_runtime(run_id, batch_runtime)
 
-    # Calculate final runtime (must include write to DB)
+        print(f"batch {batch_id} - {malformed_in_batch} malformed records")
+        total_malformed_records += malformed_in_batch
+
     total_runtime = time.time() - start_time
-    # 4. Final Console Report
+
+    print(f"total {total_malformed_records}")
     print("\n" + "="*50)
     print(" ETL EXECUTION REPORT")
     print("="*50)
@@ -537,7 +542,7 @@ def main():
     print(f"Query Selection   : {selected_query.upper()}")
     print(f"Total Runtime     : {total_runtime:.2f} seconds")
     print(f"Total Records     : {total_records}")
-    print(f"Malformed Records  : {total_malformed_records}")
+    print(f"Malformed Records : {total_malformed_records}")
     print(f"Total Batches     : {num_batches}")
     print(f"Avg Batch Size    : {avg_batch_size:.2f} records")
     print("="*50)
