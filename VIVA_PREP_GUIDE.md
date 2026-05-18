@@ -99,3 +99,16 @@ In Phase 1, we built the "Factory." In Phase 2, we make it "Smart" and "Fast."
 *   **Why use Python to manage everything?** (Because it's great at "glueing" different technologies together).
 *   **Why batch the data?** (To save memory and allow us to track performance more closely).
 *   **What was the hardest part?** (Ensuring the Regex worked across all different technologies consistently).
+
+---
+
+# Querying the database
+
+command to query databse: `psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"`
+
+```psql
+SELECT * FROM run_metadata ORDER BY run_id DESC LIMIT 10;
+SELECT * FROM daily_traffic WHERE run_id = 123 ORDER BY id;
+SELECT * FROM top_resources WHERE run_id = 123 ORDER BY request_count DESC LIMIT 20;
+SELECT * FROM hourly_errors WHERE run_id = 123 ORDER BY log_date, log_hour;
+```
