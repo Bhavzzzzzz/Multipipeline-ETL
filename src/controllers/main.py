@@ -507,6 +507,9 @@ def main():
                 if query_name == "query1":
                     valid_records = sum(int(row[2]) for row in db_client._read_csv_rows(paths) if len(row) == 4)
                     malformed_in_batch = records_in_batch - valid_records
+                elif query_name == "query2":
+                    valid_records = sum(int(row[1]) for row in db_client._read_csv_rows(paths) if len(row) == 4)
+                    malformed_in_batch = records_in_batch - valid_records
                 elif query_name == "query3":
                     valid_records = sum(int(row[3]) for row in db_client._read_csv_rows(paths) if len(row) == 6)
                     malformed_in_batch = records_in_batch - valid_records
