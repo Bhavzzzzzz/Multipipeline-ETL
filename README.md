@@ -99,8 +99,12 @@ A **PostgreSQL** database stores the final aggregated query results alongside ex
 ```text
 Multipipeline-ETL/
 ├── README.md
+├── Dockerfile                         # ETL runtime image (Python, Java, Pig, Hadoop, Hive)
+├── docker-compose.yml                 # PostgreSQL, MongoDB, and ETL services
+├── .dockerignore
+├── .env.example                       # Shared Docker/native environment template
 ├── requirements.txt
-├── setup.sh                          # Local environment variables (gitignored)
+├── .env                              # Local environment variables (gitignored)
 ├── .gitignore
 ├── VIVA_PREP_GUIDE.md
 ├── temp.md
@@ -180,6 +184,83 @@ Calculates error rates for status codes **400–599** and counts distinct error-
 
 ## 6. Setup & Installation
 
+### Recommended Path — Docker
+
+The Docker setup runs PostgreSQL and MongoDB as separate services and builds one ETL image containing Python, Java 17, Pig, Hadoop, and Hive.
+
+Prerequisites:
+
+| Dependency | Notes |
+|---|---|
+| Docker Engine | Required to build and run the containers |
+| Docker Compose v2 | Usually available as `docker compose` |
+| Raw NASA logs | Keep them in `data/raw/` on the host |
+
+Build the ETL image and start the databases:
+
+```bash
+cp .env.example .env
+# Edit .env and set PGPASSWORD plus any native tool paths you need.
+docker compose build etl
+docker compose up -d
+```
+
+Verify the ETL runtime:
+
+```bash
+docker compose run --rm etl python -c "import psycopg2, pymongo, tqdm; print('Python dependencies OK')"
+docker compose run --rm etl pig -version
+docker compose run --rm etl hadoop version
+docker compose run --rm etl hive --version
+```
+
+Run the interactive CLI:
+
+```bash
+docker compose run --rm etl python src/controllers/reporting.py
+```
+
+Run a pipeline directly:
+
+```bash
+docker compose run --rm etl python src/controllers/main.py \
+    --pipeline mongodb \
+    --query query1 \
+    --batch-size 100000 \
+    --input data/raw/NASA_access_log_Jul95.gz
+```
+
+Reset the reporting schema:
+
+```bash
+docker compose run --rm etl python src/controllers/main.py \
+    --pipeline mongodb \
+    --query query1 \
+    --batch-size 100000 \
+    --input data/raw/NASA_access_log_Jul95.gz \
+    --reset-db
+```
+
+Stop the services:
+
+```bash
+docker compose down
+```
+
+Remove database volumes and start from a completely clean database state:
+
+```bash
+docker compose down -v
+```
+
+Docker reads shared values such as `PGDATABASE`, `PGUSER`, `PGPASSWORD`, and `MONGO_DB` from `.env`. The native `PGHOST=localhost` and `MONGO_URI=mongodb://localhost:27017/` values are intentionally overridden inside Docker, where service hostnames are used instead: `PGHOST=postgres` and `MONGO_URI=mongodb://mongo:27017/`.
+
+Keep secrets in a local `.env` file. This file is gitignored and should not be committed. Docker Compose reads it automatically; native shell runs can load it with `source .env`. If the Postgres volume already exists, changing `PGPASSWORD` in `.env` will not update the existing database password; use `docker compose down -v` to recreate the development database, or change the password inside Postgres manually.
+
+### Native Setup
+
+Use the native setup only if you want to run the project directly on your host machine without Docker.
+
 ### Setup Index
 
 - [Step 1 — System Packages](#step-1--install-system-packages)
@@ -189,7 +270,7 @@ Calculates error rates for status codes **400–599** and counts distinct error-
 - [Step 5 — Apache Hadoop](#step-5--apache-hadoop)
 - [Step 6 — Apache Hive 4](#step-6--apache-hive-4)
 - [Step 7 — MongoDB](#step-7--mongodb)
-- [Step 8 — Environment Variables (`setup.sh`)](#step-8--environment-variables-setupsh)
+- [Step 8 — Environment Variables (`.env`)](#step-8--environment-variables-env)
 - [Step 9 — PostgreSQL Schema](#step-9--postgresql-schema)
 
 ---
@@ -286,7 +367,7 @@ Setup notes:
 $HADOOP_HOME/share/hadoop/tools/lib/hadoop-streaming-*.jar
 ```
 
-Example environment exports to add to `setup.sh`:
+Example environment exports to add to `.env`:
 
 ```bash
 export HADOOP_HOME=/opt/hadoop-3.3.6
@@ -350,19 +431,18 @@ mongosh --quiet --eval 'db.runCommand({ ping: 1 })'
 
 ---
 
-### Step 8 — Environment Variables (`setup.sh`)
+### Step 8 — Environment Variables (`.env`)
 
-Create a local `setup.sh` file (this file is gitignored), populate it with the values below, and source it before running anything:
+Create a local `.env` file (this file is gitignored), populate it with the values below, and source it before native runs:
 
 ```bash
-source setup.sh
+cp .env.example .env
+source .env
 ```
 
-**Template — copy into your local `setup.sh`:**
+**Template — copy into your local `.env`:**
 
 ```bash
-#!/usr/bin/env bash
-
 # ── PostgreSQL ────────────────────────────────────────────────────────────────
 export PGDATABASE=nosql_project
 export PGUSER=postgres
@@ -378,7 +458,9 @@ export MONGO_DB='nosql_project'
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 export PIG_HOME=/opt/pig-0.18.0
 export HADOOP_HOME=/opt/hadoop-3.3.6
+export HADOOP_BIN="$HADOOP_HOME/bin/hadoop"
 export HADOOP_CONF_DIR="$HADOOP_HOME/etc/hadoop"
+export HADOOP_STREAMING_JAR="$HADOOP_HOME/share/hadoop/tools/lib/hadoop-streaming-3.3.6.jar"
 export HIVE_HOME=/opt/apache-hive-4.1.0-bin
 export HIVE_BIN="$HIVE_HOME/bin/hive"
 export HIVE_BEELINE_BIN="$HIVE_HOME/bin/beeline"
@@ -414,7 +496,7 @@ which mongosh
 Verify all key variables are exported correctly after sourcing:
 
 ```bash
-source setup.sh
+source .env
 echo "$JAVA_HOME"
 echo "$PIG_HOME"
 echo "$HADOOP_HOME"
@@ -444,9 +526,9 @@ sudo -u postgres psql -d nosql_project -f database/reset_and_create.sql
 | `PGDATABASE` | `nosql_project` | Target PostgreSQL database |
 | `PGUSER` | `postgres` | PostgreSQL user |
 | `PGPASSWORD` | `your_password` | PostgreSQL password |
-| `PGHOST` | `localhost` | PostgreSQL host |
+| `PGHOST` | `localhost` native, `postgres` Docker | PostgreSQL host |
 | `PGPORT` | `5432` | PostgreSQL port |
-| `MONGO_URI` | `mongodb://localhost:27017/` | MongoDB connection string |
+| `MONGO_URI` | `mongodb://localhost:27017/` native, `mongodb://mongo:27017/` Docker | MongoDB connection string |
 | `MONGO_DB` | `nosql_project` | MongoDB database name |
 | `JAVA_HOME` | `/usr/lib/jvm/java-17-openjdk-amd64` | Java 17 installation root |
 | `PIG_HOME` | `/opt/pig-0.18.0` | Apache Pig root |
@@ -457,42 +539,70 @@ sudo -u postgres psql -d nosql_project -f database/reset_and_create.sql
 | `HIVE_BEELINE_BIN` | `$HIVE_HOME/bin/beeline` | Beeline executable path |
 | `HIVE_JDBC_URL` | `jdbc:hive2://` | JDBC URL for local Hive (embedded) |
 
-> 🔒 Keep actual credentials in your local `setup.sh` or shell profile — never commit them to version control.
+> 🔒 Keep actual credentials in your local `.env` or shell profile — never commit them to version control.
 
 ---
 
 ## 8. Running the Framework
 
-Ensure PostgreSQL and MongoDB are running, and that your virtual environment and environment variables are active before executing any of the commands below.
+With Docker, ensure the database services are running before executing pipeline commands:
 
-### Launch the Web Dashboard
-(NOT WORKING CURRENTLY)Run these commands first in every new terminal session to prepare your environment:
 ```bash
-source venv/bin/activate
-source setup.sh
-sudo service postgresql start
-sudo service mongod start
-
-# Run this command to launch ui (This will automatically open the dashboard in your browser. If it doesn't, manually navigate to http://localhost:8501)
-
-streamlit run src/ui/app.py
+docker compose up -d
 ```
-### Launch the Interactive CLI
+
+Without Docker, ensure PostgreSQL and MongoDB are running, and that your virtual environment and environment variables are active before executing any of the native commands below.
+
+### Docker CLI
+
+```bash
+docker compose run --rm etl python src/controllers/reporting.py
+```
+
+### Docker Pipeline Execution
+
+```bash
+# MongoDB
+docker compose run --rm etl python src/controllers/main.py \
+    --pipeline mongodb \
+    --batch-size 100000 \
+    --input data/raw/NASA_access_log_Jul95.gz
+
+# Apache Pig
+docker compose run --rm etl python src/controllers/main.py \
+    --pipeline pig \
+    --batch-size 100000 \
+    --input data/raw/NASA_access_log_Jul95.gz
+
+# MapReduce
+docker compose run --rm etl python src/controllers/main.py \
+    --pipeline mapreduce \
+    --batch-size 100000 \
+    --input data/raw/NASA_access_log_Jul95.gz
+
+# Apache Hive
+docker compose run --rm etl python src/controllers/main.py \
+    --pipeline hive \
+    --batch-size 100000 \
+    --input data/raw/NASA_access_log_Jul95.gz
+```
+
+### Native Interactive CLI
 
 ```bash
 source venv/bin/activate
-source setup.sh
+source .env
 sudo service postgresql start
 sudo service mongod start
 
 python src/controllers/reporting.py
 ```
 
-### Manual Pipeline Execution
+### Native Pipeline Execution
 
 ```bash
 source venv/bin/activate
-source setup.sh
+source .env
 
 # Apache Pig
 python src/controllers/main.py --pipeline pig \
@@ -518,7 +628,7 @@ python src/controllers/main.py --pipeline mongodb \
 - **Input formats:** The controller can read either the gzipped NASA logs or the extracted plain-text copies in `data/raw/`.
 - **Hive performance:** Hive is not optimized for small batches. Use `--batch-size 100000` or larger for any meaningful experiment.
 - **MongoDB `logs` collection:** The MongoDB pipeline drops and recreates this collection on every batch run. Avoid reusing `MONGO_DB` for any other data.
-- **`setup.sh` is gitignored:** This is intentional. Store all secrets and local paths there, never in tracked files.
+- **`.env` is gitignored:** This is intentional. Store all secrets and local paths there, never in tracked files.
 - **Malformed records:** Every pipeline reports a malformed-record count per batch. These counts are stored in PostgreSQL and can be used to verify consistency across pipelines.
 - **Typical install paths** (Linux): `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`, `PIG_HOME=/opt/pig-0.18.0`, `HADOOP_HOME=/opt/hadoop-3.3.6`, `HIVE_HOME=/opt/apache-hive-4.1.0-bin`. Adjust if your system differs.
 

@@ -81,6 +81,10 @@ def _ensure_output_directory() -> None:
 
 def _load_setup_environment() -> None:
     """Load exported vars from setup.sh into this process environment."""
+    required_env = ["PGDATABASE", "PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "MONGO_URI", "MONGO_DB"]
+    if all(os.getenv(name) for name in required_env):
+        return
+
     if not SETUP_SH_PATH.exists():
         raise FileNotFoundError(f"setup.sh not found at {SETUP_SH_PATH}")
 
@@ -123,24 +127,25 @@ def _mongo_ping(uri: str) -> bool:
     if not uri:
         return False
 
-    result = subprocess.run(
-        [
-            "mongosh",
-            uri,
-            "--quiet",
-            "--eval",
-            "db.runCommand({ ping: 1 })",
-        ],
-        cwd=str(REPO_ROOT),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    return result.returncode == 0 and "ok" in (result.stdout or "")
+    try:
+        from pymongo import MongoClient
+
+        client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+        try:
+            client.admin.command("ping")
+            return True
+        finally:
+            client.close()
+    except Exception:
+        return False
 
 
 def _ensure_benchmark_mongo() -> None:
     global _BENCH_MONGO_STARTED
+
+    configured_mongo_uri = os.getenv("MONGO_URI", "")
+    if _mongo_ping(configured_mongo_uri):
+        return
 
     # Prefer and enforce an isolated benchmark-local MongoDB instance to avoid
     # interference from unstable system services.

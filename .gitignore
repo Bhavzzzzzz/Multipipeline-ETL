@@ -25,6 +25,7 @@ derby.log
 
 # my own files
 setup.sh
+.env
 .agents/
 .codex/
 *.log

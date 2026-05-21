@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    platform: linux/amd64
+    environment:
+      POSTGRES_DB: ${PGDATABASE:-nosql_project}
+      POSTGRES_USER: ${PGUSER:-postgres}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nosql_project"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mongo:
+    image: mongo:7.0.24-jammy
+    platform: linux/amd64
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  etl:
+    profiles:
+      - etl
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app
+    environment:
+      PGDATABASE: ${PGDATABASE:-nosql_project}
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
+      PGHOST: postgres
+      PGPORT: "5432"
+      MONGO_URI: mongodb://mongo:27017/
+      MONGO_DB: ${MONGO_DB:-nosql_project}
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+
+volumes:
+  postgres_data:
+  mongo_data:
