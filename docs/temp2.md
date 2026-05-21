@@ -27,10 +27,6 @@ A typical workflow may include:
 - Generation of report
 The project must function as a single coherent tool and not as a collection of independent
 scripts.
-The data loading and cleaning process should be part of the pipeline itself. For instance, if
-a MapReduce pipeline is chosen, then loading the data from the batch source and performing
-the cleaning operations should also be implemented as MapReduce jobs, rather than using a
-separate Unix/Java/Python single-threaded script.
 
 ## 2. Schema Design for MySQL Loading
 

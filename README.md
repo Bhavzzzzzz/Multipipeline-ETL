@@ -106,9 +106,6 @@ Multipipeline-ETL/
 ├── requirements.txt
 ├── .env                              # Local environment variables (gitignored)
 ├── .gitignore
-├── VIVA_PREP_GUIDE.md
-├── temp.md
-├── temp2.md
 ├── data/
 │   ├── hive/
 │   │   └── warehouse/
@@ -131,6 +128,8 @@ Multipipeline-ETL/
 │   ├── Phase 1 Status Report.docx
 │   ├── Project_evaluation_guidelines_2026.pdf
 │   ├── WhatsApp Image 2026-04-28 at 03.15.27.jpeg
+│   ├── temp.md
+│   ├── temp2.md
 │   └── phase1_status.md
 └── src/
     ├── controllers/

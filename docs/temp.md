@@ -163,8 +163,8 @@ obtained from the experiments.
 
 ## Video Presentation Requirements
 
-The video presentation submitted during Phase 2 must include a live demonstration of the
-tool. The demo must show the interface for pipeline selection, execution of at least one run,
+The video presentation submitted during Phase 2 must include a live demonstration of the tool.
+The demo must show the interface for pipeline selection, execution of at least one run,
 generation of results, storage of the aggregated output in MySQL or PostgreSQL, and the
 
 
