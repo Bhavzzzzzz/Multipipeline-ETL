@@ -466,7 +466,7 @@ sudo -u postgres psql -d nosql_project -f database/reset_and_create.sql
 Ensure PostgreSQL and MongoDB are running, and that your virtual environment and environment variables are active before executing any of the commands below.
 
 ### Launch the Web Dashboard
-Run these commands first in every new terminal session to prepare your environment:
+(NOT WORKING CURRENTLY)Run these commands first in every new terminal session to prepare your environment:
 ```bash
 source venv/bin/activate
 source setup.sh
